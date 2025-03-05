@@ -2,6 +2,54 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const _ = require("lodash"); 
 
+const deleteQuestion = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await prisma.question.delete({
+      where: { id: Number(id) },
+    });
+
+    res.status(200).json({ message: "Question deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete question", error });
+  }
+};
+
+
+
+const updateQuestion = async (req, res) => {
+  const { id } = req.params;
+  const { portionId, subjectId, chapterId, topicId, questionTypeId, question, image, optionA, optionB, optionC, optionD, correctOption, hint } = req.body;
+
+  try {
+    const updatedQuestion = await prisma.question.update({
+      where: { id: Number(id) },
+      data: {
+        subjectId,
+        chapterId,
+        topicId,
+        portionId,
+        questionTypeId,
+        question,
+        image,
+        optionA,
+        optionB,
+        optionC,
+        optionD,
+        correctOption,
+        hint,
+      },
+    });
+
+    res.status(200).json({ message: "Question updated successfully", updatedQuestion });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update question", error });
+  }
+};
+
+
+
 // Get All Questions
 const getAllQuestions = async (req, res) => {
   try {
@@ -71,30 +119,17 @@ const getQuestionsByQuestionType = async (req, res) => {
 };
 
 // Add a Question
-const addQuestion = async (req, res) => {
-  const {
-    questionTypeId,
-    portionId,
-    subjectId,
-    chapterId,
-    topicId,
-    question,
-    optionA,
-    optionB,
-    optionC,
-    optionD,
-    correctOption,
-    hint,
-  } = req.body;
+const createQuestion = async (req, res) => {
+  const { portionId, subjectId, chapterId, topicId, questionTypeId, question, image, optionA, optionB, optionC, optionD, correctOption, hint } = req.body;
 
   try {
-    const question = await prisma.question.create({
+    await prisma.question.create({
       data: {
-        questionTypeId,
-        portionId,
         subjectId,
         chapterId,
         topicId,
+        portionId,
+        questionTypeId,
         question,
         image,
         optionA,
@@ -105,11 +140,13 @@ const addQuestion = async (req, res) => {
         hint,
       },
     });
-    res.status(201).json(question);
+
+    res.status(201).json({ message: "Question added successfully" });
   } catch (error) {
-    res.status(500).json({ message: "Error adding question" });
+    res.status(500).json({ message: "Failed to add question", error });
   }
 };
+
 
 // Add Multiple Questions
 const createQuestions = async (req, res) => {
@@ -511,11 +548,13 @@ module.exports = {
   getQuestionsByChapter,
   getQuestionsByQuestionType,
   getQuestionsByMultipleTypes,
-  addQuestion,
+  createQuestion,
   createQuestions,
   getRandomTestQuestions,
   getPortionBasedTestQuestions,
   getSubjectBasedTestQuestions,
   getCustomTestQuestions,
-  getChapterBasedTestQuestions
+  getChapterBasedTestQuestions,
+  updateQuestion,
+  deleteQuestion 
 };

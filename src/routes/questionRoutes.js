@@ -7,13 +7,15 @@ const {
   getQuestionsBySubject,
   getQuestionsByChapter,
   getQuestionsByQuestionType,
-  addQuestion,
+  createQuestion,
   createQuestions,
   getRandomTestQuestions,
   getPortionBasedTestQuestions,
   getSubjectBasedTestQuestions,
   getChapterBasedTestQuestions,
-  getCustomTestQuestions
+  getCustomTestQuestions,
+  deleteQuestion,
+  updateQuestion 
 } = require("../controllers/questionController");
 const { authenticateUser, authorizeRole } = require("../middlewares/authMiddleware");
 
@@ -25,8 +27,10 @@ router.get("/topic/:topicId", authenticateUser, getQuestionsByTopic);
 router.get("/subject/:subjectId", authenticateUser, getQuestionsBySubject);
 router.get("/chapter/:chapterId", authenticateUser, getQuestionsByChapter);
 router.get("/questiontype/:questionTypeId", authenticateUser, getQuestionsByQuestionType);
-router.post("/", authenticateUser, authorizeRole(["admin"]), addQuestion);
+router.post("/", authenticateUser, authorizeRole(["admin"]), createQuestion);
 router.post("/many", authenticateUser, authorizeRole(["admin"]), createQuestions);
+router.delete("/delete/:id", authenticateUser, authorizeRole(["admin"]), deleteQuestion  );
+router.post("/update/:id", authenticateUser, authorizeRole(["admin"]), updateQuestion );
 
 // New route for fetching questions by multiple topics
 router.get("/topics", authenticateUser, getQuestionsByMultipleTopics);
