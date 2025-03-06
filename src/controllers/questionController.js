@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const _ = require("lodash"); 
+const multer = require("multer");
 
 const deleteQuestion = async (req, res) => {
   const { id } = req.params;
@@ -20,19 +21,15 @@ const deleteQuestion = async (req, res) => {
 
 const updateQuestion = async (req, res) => {
   const { id } = req.params;
-  const { portionId, subjectId, chapterId, topicId, questionTypeId, question, image, optionA, optionB, optionC, optionD, correctOption, hint } = req.body;
+  const {  topicId, questionTypeId, question, optionA, optionB, optionC, optionD, correctOption, hint } = req.body;
 
   try {
     const updatedQuestion = await prisma.question.update({
       where: { id: Number(id) },
       data: {
-        subjectId,
-        chapterId,
         topicId,
-        portionId,
         questionTypeId,
         question,
-        image,
         optionA,
         optionB,
         optionC,
@@ -61,6 +58,30 @@ const getAllQuestions = async (req, res) => {
     res.status(500).json({ message: "Error fetching questions", error });
   }
 };
+
+// Get a Single Question by ID
+const getQuestionById = async (req, res) => {
+  const { id } = req.params; // Extract the question ID from request parameters
+
+  try {
+    const question = await prisma.question.findUnique({
+      where: { id: parseInt(id) }, // Ensure ID is an integer
+      include: {
+        topic: true,
+        questionType:true, // Include related topic details if needed
+      },
+    });
+
+    if (!question) {
+      return res.status(404).json({ message: "Question not found" });
+    }
+
+    res.json(question);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching question", error });
+  }
+};
+
 
 // Get Questions by Topic
 const getQuestionsByTopic = async (req, res) => {
@@ -118,32 +139,89 @@ const getQuestionsByQuestionType = async (req, res) => {
   }
 };
 
-// Add a Question
-const createQuestion = async (req, res) => {
-  const { portionId, subjectId, chapterId, topicId, questionTypeId, question, image, optionA, optionB, optionC, optionD, correctOption, hint } = req.body;
+// Storage for `image`
+const imageStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "questions/question/"); // Store question images in `uploads/questions/`
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + path.extname(file.originalname)); // Unique filename
+  },
+});
 
+// Storage for `hintImage`
+const hintImageStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "questions/hints/"); // Store hint images in `uploads/hints/`
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + path.extname(file.originalname)); // Unique filename
+  },
+});
+
+// Create upload handlers for different storage
+const uploadImage = multer({ storage: imageStorage }).single("image");
+const uploadHintImage = multer({ storage: hintImageStorage }).single("hintImage");
+
+// Combined Middleware to Handle Both Uploads
+const uploadFiles = multer({ 
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      if (file.fieldname === "image") {
+        cb(null, "questions/question/");
+      } else if (file.fieldname === "hintImage") {
+        cb(null, "questions/hints/");
+      }
+    },
+    filename: function (req, file, cb) {
+      cb(null, Date.now() + "-" + file.originalname);
+    }
+  })
+}).fields([
+  { name: "image", maxCount: 1 },
+  { name: "hintImage", maxCount: 1 }
+]);
+
+
+// Create Question Function
+const createQuestion = async (req, res) => {
   try {
-    await prisma.question.create({
-      data: {
-        subjectId,
-        chapterId,
-        topicId,
-        portionId,
-        questionTypeId,
-        question,
-        image,
-        optionA,
-        optionB,
-        optionC,
-        optionD,
-        correctOption,
-        hint,
-      },
-    });
+    console.log("Request Body:", req.body); // Log request body
+    console.log("Uploaded Files:", req.file, req.files); // Log uploaded files
+
+    const {
+      portionId, subjectId, chapterId, topicId, questionTypeId,
+      question, optionA, optionB, optionC, optionD, correctOption, hint
+    } = req.body;
+
+    // Ensure all required fields exist
+    if (!question || !correctOption || !optionA || !optionB || !optionC || !optionD) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // Convert numeric values
+    const parsedData = {
+      subjectId: parseInt(subjectId) || null,
+      chapterId: parseInt(chapterId) || null,
+      topicId: parseInt(topicId) || null,
+      portionId: parseInt(portionId) || null,
+      questionTypeId: parseInt(questionTypeId) || null,
+      question,
+      image: req.file?.path || null,
+      optionA,
+      optionB,
+      optionC,
+      optionD,
+      correctOption,
+      hint,
+      hintImage: req.files?.hintImage ? req.files.hintImage[0].path : null,
+    };
+
+    await prisma.question.create({ data: parsedData });
 
     res.status(201).json({ message: "Question added successfully" });
   } catch (error) {
-    res.status(500).json({ message: "Failed to add question", error });
+    res.status(500).json({ message: "Failed to add question", error: error.message });
   }
 };
 
@@ -556,5 +634,7 @@ module.exports = {
   getCustomTestQuestions,
   getChapterBasedTestQuestions,
   updateQuestion,
-  deleteQuestion 
+  deleteQuestion,
+  upload: uploadFiles,
+  getQuestionById
 };
