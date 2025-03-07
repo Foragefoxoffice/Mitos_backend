@@ -17,7 +17,8 @@ const {
   deleteQuestion,
   updateQuestion,
   upload,
-  getQuestionById
+  getQuestionById,
+  getQuestionsByPortion
 } = require("../controllers/questionController");
 const { authenticateUser, authorizeRole } = require("../middlewares/authMiddleware");
 
@@ -27,6 +28,7 @@ const router = express.Router();
 router.get("/", authenticateUser, getAllQuestions);
 router.get("/:id",authenticateUser,getQuestionById);
 router.get("/topic/:topicId", authenticateUser, getQuestionsByTopic);
+router.get("/getportion/:portionId", authenticateUser, getQuestionsByPortion);
 router.get("/subject/:subjectId", authenticateUser, getQuestionsBySubject);
 router.get("/chapter/:chapterId", authenticateUser, getQuestionsByChapter);
 router.get("/questiontype/:questionTypeId", authenticateUser, getQuestionsByQuestionType);

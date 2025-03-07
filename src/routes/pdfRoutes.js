@@ -49,6 +49,6 @@ router.get("/portion/:portionId", authenticateUser, getPDFsByPortion);
 router.get("/subject/:subjectId", authenticateUser, getPDFsBySubject);
 router.get("/chapter/:chapterId", authenticateUser, getPDFsByChapter);
 router.get("/topic/:topicId", authenticateUser, getPDFsByTopic);
-router.delete("/:id", authenticateUser, authorizeRole(["admin"]), deletePDF);
+router.delete("/:id", authenticateUser, deletePDF);
 
 module.exports = router;

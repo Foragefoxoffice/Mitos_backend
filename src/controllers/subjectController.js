@@ -45,13 +45,20 @@ const deleteSubject = async (req, res) => {
 
 // Get All Subjects
 const getAllSubjects = async (req, res) => {
-    try {
-      const subjects = await prisma.subject.findMany();
-      res.json(subjects);
-    } catch (error) {
-      res.status(500).json({ message: "Error fetching subjects", error });
-    }
-  };
+  try {
+    const subjects = await prisma.subject.findMany({
+      select: {
+        id: true,
+        name: true,
+        portion: true,
+      },
+    });
+    res.json(subjects);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching subjects", error });
+  }
+};
+
   
   // Get Subject by ID
   const getSubjectById = async (req, res) => {

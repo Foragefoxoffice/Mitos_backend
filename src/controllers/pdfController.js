@@ -58,7 +58,7 @@ const createPDF = async (req, res) => {
 // 📄 Fetch All PDFs
 const getAllPDFs = async (req, res) => {
   try {
-    const pdfs = await prisma.pDF.findMany();
+    const pdfs = await prisma.pdf.findMany();
     res.json(pdfs);
   } catch (error) {
     res.status(500).json({ message: "Error fetching PDFs", error });
@@ -69,7 +69,7 @@ const getAllPDFs = async (req, res) => {
 const getPDFById = async (req, res) => {
   try {
     const { id } = req.params;
-    const pdf = await prisma.pDF.findUnique({ where: { id: parseInt(id) } });
+    const pdf = await prisma.pdf.findUnique({ where: { id: parseInt(id) } });
 
     if (!pdf) {
       return res.status(404).json({ message: "PDF not found" });
@@ -85,24 +85,32 @@ const getPDFById = async (req, res) => {
 const deletePDF = async (req, res) => {
   try {
     const { id } = req.params;
-    const pdf = await prisma.pDF.findUnique({ where: { id: parseInt(id) } });
+    console.log("Deleting PDF with ID:", id); // Debugging log
 
+    const pdf = await prisma.pdf.findUnique({ where: { id: parseInt(id) } });
+    
     if (!pdf) {
       return res.status(404).json({ message: "PDF not found" });
     }
 
-    const filePath = path.join(__dirname, "..", "pdfuploads", pdf.filePath.split("/").pop());
+    console.log("PDF found:", pdf); // Debugging log
 
-    // Delete the file from the server
+    const filePath = path.join(__dirname, "..", "pdfuploads", pdf.url.split("/").pop());
+    console.log("File path:", filePath); // Debugging log
+
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+      console.log("File deleted from server.");
+    } else {
+      console.log("File not found on server.");
     }
 
-    // Delete from database
-    await prisma.pDF.delete({ where: { id: parseInt(id) } });
+    await prisma.pdf.delete({ where: { id: parseInt(id) } });
+    console.log("PDF deleted from database.");
 
     res.json({ message: "PDF deleted successfully" });
   } catch (error) {
+    console.error("Error deleting PDF:", error);
     res.status(500).json({ message: "Error deleting PDF", error });
   }
 };
@@ -111,7 +119,7 @@ const deletePDF = async (req, res) => {
 const getPDFsByPortion = async (req, res) => {
     try {
       const { portionId } = req.params;
-      const pdfs = await prisma.pDF.findMany({
+      const pdfs = await prisma.pdf.findMany({
         where: { portionId: parseInt(portionId) },
       });
   
@@ -129,7 +137,7 @@ const getPDFsByPortion = async (req, res) => {
   const getPDFsBySubject = async (req, res) => {
     try {
       const { subjectId } = req.params;
-      const pdfs = await prisma.pDF.findMany({
+      const pdfs = await prisma.pdf.findMany({
         where: { subjectId: parseInt(subjectId) },
       });
   
@@ -147,7 +155,7 @@ const getPDFsByPortion = async (req, res) => {
   const getPDFsByChapter = async (req, res) => {
     try {
       const { chapterId } = req.params;
-      const pdfs = await prisma.pDF.findMany({
+      const pdfs = await prisma.pdf.findMany({
         where: { chapterId: parseInt(chapterId) },
       });
   
@@ -165,7 +173,7 @@ const getPDFsByPortion = async (req, res) => {
   const getPDFsByTopic = async (req, res) => {
     try {
       const { topicId } = req.params;
-      const pdfs = await prisma.pDF.findMany({
+      const pdfs = await prisma.pdf.findMany({
         where: { topicId: parseInt(topicId) },
       });
   

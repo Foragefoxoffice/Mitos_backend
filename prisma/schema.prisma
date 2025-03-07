@@ -28,7 +28,7 @@ model questionType {
   id               Int          @id @default(autoincrement())
   name             String
   parentId         Int?
-  parent           questionType? @relation("questionTypeToquestionType", fields: [parentId], references: [id], map: "questionType_parentId_fkey")
+  parent           questionType? @relation("questionTypeToquestionType", fields: [parentId], references: [id], map: "questionType_parentId_fkey", onDelete: Cascade)
   other_questionType questionType[] @relation("questionTypeToquestionType")
   question         question[]
   createdAt        DateTime      @default(now())
@@ -54,7 +54,7 @@ model subject {
   chapters    chapter[] @relation("subjectChapters")
   questions   question[]
   pdfs        Pdf[]     @relation("SubjectPdfs") // Added relation for PDFs
-  portion     portion   @relation("PortionSubjects", fields: [portionId], references: [id], map: "subject_portionId_fkey")
+  portion     portion   @relation("PortionSubjects", fields: [portionId], references: [id], map: "subject_portionId_fkey", onDelete: Cascade)
   createdAt   DateTime   @default(now())
 
   @@index([id], map: "Subject_id_fkey")
@@ -67,7 +67,7 @@ model chapter {
   subjectId   Int
   questions   question[]
   pdfs        Pdf[]     @relation("ChapterPdfs") // Added relation for PDFs
-  subject     subject   @relation("subjectChapters", fields: [subjectId], references: [id], map: "chapter_subjectId_fkey")
+  subject     subject   @relation("subjectChapters", fields: [subjectId], references: [id], map: "chapter_subjectId_fkey", onDelete: Cascade)
   topics      topic[]   @relation("chapterTopics")
   createdAt   DateTime  @default(now())
 
@@ -80,7 +80,7 @@ model topic {
   chapterId   Int
   questions   question[]
   pdfs        Pdf[]     @relation("TopicPdfs") // Added relation for PDFs
-  chapter     chapter   @relation("chapterTopics", fields: [chapterId], references: [id], map: "topic_chapterId_fkey")
+  chapter     chapter   @relation("chapterTopics", fields: [chapterId], references: [id], map: "topic_chapterId_fkey", onDelete: Cascade)
   createdAt   DateTime  @default(now())
 
   @@index([chapterId], map: "topic_chapterId_fkey")
@@ -102,11 +102,11 @@ model question {
   correctOption String
   hint          String?
   hintImage     String?
-  questionType  questionType @relation(fields: [questionTypeId], references: [id], map: "question_questionTypeId_fkey")
-  portion       portion      @relation("PortionQuestions", fields: [portionId], references: [id], map: "question_portionId_fkey") 
-  subject       subject      @relation(fields: [subjectId], references: [id], map: "question_subjectId_fkey")
-  chapter       chapter      @relation(fields: [chapterId], references: [id], map: "question_chapterId_fkey")
-  topic         topic        @relation(fields: [topicId], references: [id], map: "question_topicId_fkey")
+  questionType  questionType @relation(fields: [questionTypeId], references: [id], map: "question_questionTypeId_fkey", onDelete: Cascade)
+  portion       portion      @relation("PortionQuestions", fields: [portionId], references: [id], map: "question_portionId_fkey", onDelete: Cascade) 
+  subject       subject      @relation(fields: [subjectId], references: [id], map: "question_subjectId_fkey", onDelete: Cascade)
+  chapter       chapter      @relation(fields: [chapterId], references: [id], map: "question_chapterId_fkey", onDelete: Cascade)
+  topic         topic        @relation(fields: [topicId], references: [id], map: "question_topicId_fkey", onDelete: Cascade)
   createdAt     DateTime     @default(now())
 
   @@index([questionTypeId], map: "Question_questionTypeId_fkey")
@@ -124,10 +124,10 @@ model Pdf {
   subjectId  Int?
   chapterId  Int?
   topicId    Int?
-  portion    portion? @relation("PortionPdfs", fields: [portionId], references: [id], map: "Pdf_portionId_fkey")
-  subject    subject? @relation("SubjectPdfs", fields: [subjectId], references: [id], map: "Pdf_subjectId_fkey")
-  chapter    chapter? @relation("ChapterPdfs", fields: [chapterId], references: [id], map: "Pdf_chapterId_fkey")
-  topic      topic?   @relation("TopicPdfs", fields: [topicId], references: [id], map: "Pdf_topicId_fkey")
+  portion    portion? @relation("PortionPdfs", fields: [portionId], references: [id], map: "Pdf_portionId_fkey", onDelete: Cascade)
+  subject    subject? @relation("SubjectPdfs", fields: [subjectId], references: [id], map: "Pdf_subjectId_fkey", onDelete: Cascade)
+  chapter    chapter? @relation("ChapterPdfs", fields: [chapterId], references: [id], map: "Pdf_chapterId_fkey", onDelete: Cascade)
+  topic      topic?   @relation("TopicPdfs", fields: [topicId], references: [id], map: "Pdf_topicId_fkey", onDelete: Cascade)
   createdAt  DateTime @default(now())
 
   @@index([portionId], map: "Pdf_portionId_fkey")
@@ -151,7 +151,7 @@ model TestResult {
   resultsByChapter   Json
   createdAt      DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], map: "TestResult_userId_fkey")
+  user User @relation(fields: [userId], references: [id], map: "TestResult_userId_fkey", onDelete: Cascade)
 
   @@index([userId], map: "TestResult_userId_fkey")
 }

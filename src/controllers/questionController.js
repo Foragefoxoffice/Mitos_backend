@@ -111,6 +111,21 @@ const getQuestionsBySubject = async (req, res) => {
   }
 };
 
+// Get Questions by Subject
+const getQuestionsByPortion = async (req, res) => {
+  const { portionId } = req.params;
+  try {
+    const questions = await prisma.question.findMany({
+      where: { portionId: parseInt(portionId) },
+     
+    });
+    res.json(questions);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching questions by subject" });
+  }
+};
+
+
 // Get Questions by Chapter
 const getQuestionsByChapter = async (req, res) => {
   const { chapterId } = req.params;
@@ -207,7 +222,7 @@ const createQuestion = async (req, res) => {
       portionId: parseInt(portionId) || null,
       questionTypeId: parseInt(questionTypeId) || null,
       question,
-      image: req.file?.path || null,
+      image: req.files?.image ? req.files.image[0].path : null,
       optionA,
       optionB,
       optionC,
@@ -636,5 +651,6 @@ module.exports = {
   updateQuestion,
   deleteQuestion,
   upload: uploadFiles,
-  getQuestionById
+  getQuestionById,
+  getQuestionsByPortion
 };
