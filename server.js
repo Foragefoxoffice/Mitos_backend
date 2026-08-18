@@ -7,10 +7,10 @@ const dotenv = require("dotenv");
 const path = require("path");
 const fs = require("fs");
 
+dotenv.config();
+
 require("./cron/expireSubscriptions");
 require("./cron/cleanupNotifications");
-
-dotenv.config();
 
 /* ===============================================
    🛡️ GLOBAL ERROR HANDLERS (CRITICAL FOR PRODUCTION)
