@@ -28,6 +28,7 @@ google-play-api.json
 uploads/
 pdfuploads/
 reference/
+questions/
 
 # Database dumps
 *.sql
