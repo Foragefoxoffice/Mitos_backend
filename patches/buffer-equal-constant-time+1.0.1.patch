@@ -1,0 +1,14 @@
+diff --git a/node_modules/buffer-equal-constant-time/index.js b/node_modules/buffer-equal-constant-time/index.js
+index 5462c1f..e09550a 100644
+--- a/node_modules/buffer-equal-constant-time/index.js
++++ b/node_modules/buffer-equal-constant-time/index.js
+@@ -1,7 +1,8 @@
+ /*jshint node:true */
+ 'use strict';
+ var Buffer = require('buffer').Buffer; // browserify
+-var SlowBuffer = require('buffer').SlowBuffer;
++var SlowBuffer = require('buffer').SlowBuffer || function SlowBuffer() {};
++if (!SlowBuffer.prototype) SlowBuffer.prototype = {};
+ 
+ module.exports = bufferEq;
+ 

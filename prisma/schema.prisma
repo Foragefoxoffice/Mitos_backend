@@ -1,0 +1,759 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x", "darwin-arm64"]
+}
+
+datasource db {
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+model portion {
+  id        Int        @id @default(autoincrement())
+  name      String
+  createdAt DateTime   @default(now())
+  isPremium Boolean    @default(true)
+  pdf       pdf[]
+  questions question[] @relation("PortionQuestions")
+  subjects  subject[]  @relation("PortionSubjects")
+
+  @@index([id], map: "Portion_id_fkey")
+}
+
+model subject {
+  id                      Int                      @id @default(autoincrement())
+  name                    String
+  portionId               Int
+  createdAt               DateTime                 @default(now())
+  isPremium               Boolean                  @default(true)
+  chapters                chapter[]                @relation("subjectChapters")
+  pdf                     pdf[]
+  questions               question[]
+  portion                 portion                  @relation("PortionSubjects", fields: [portionId], references: [id], onDelete: Cascade, map: "subject_portionId_fkey")
+  testSeriesQuestions     testseriesquestionbank[]
+
+  @@index([id], map: "Subject_id_fkey")
+  @@index([portionId], map: "subject_portionId_fkey")
+}
+
+model chapter {
+  id                  Int                      @id @default(autoincrement())
+  name                String
+  subjectId           Int
+  createdAt           DateTime                 @default(now())
+  isPremium           Boolean                  @default(true)
+  subject             subject                  @relation("subjectChapters", fields: [subjectId], references: [id], onDelete: Cascade, map: "chapter_subjectId_fkey")
+  pdf                 pdf[]
+  questions           question[]
+  topics              topic[]                  @relation("chapterTopics")
+  testSeriesQuestions testseriesquestionbank[]
+
+  @@index([subjectId], map: "chapter_subjectId_fkey")
+}
+
+model topic {
+  id                  Int                      @id @default(autoincrement())
+  name                String
+  chapterId           Int
+  createdAt           DateTime                 @default(now())
+  isPremium           Boolean                  @default(true)
+  pdf                 pdf[]
+  questions           question[]
+  chapter             chapter                  @relation("chapterTopics", fields: [chapterId], references: [id], onDelete: Cascade, map: "topic_chapterId_fkey")
+  testSeriesQuestions testseriesquestionbank[]
+
+  @@index([chapterId], map: "topic_chapterId_fkey")
+}
+
+model question {
+  id                 Int                 @id @default(autoincrement())
+  questionTypeId     Int
+  portionId          Int
+  subjectId          Int
+  chapterId          Int
+  topicId            Int
+  question           String              @db.LongText
+  image              String?
+  optionA            String              @db.LongText
+  optionB            String              @db.LongText
+  optionC            String              @db.LongText
+  optionD            String              @db.LongText
+  correctOption      String
+  hint               String?             @db.LongText
+  hintImage          String?
+  createdAt          DateTime            @default(now())
+  difficulty         Int?                @default(1)
+  isPremium          Boolean             @default(true)
+  chapter            chapter             @relation(fields: [chapterId], references: [id], onDelete: Cascade, map: "question_chapterId_fkey")
+  portion            portion             @relation("PortionQuestions", fields: [portionId], references: [id], onDelete: Cascade, map: "question_portionId_fkey")
+  questionType       questiontype        @relation(fields: [questionTypeId], references: [id], onDelete: Cascade, map: "question_questionTypeId_fkey")
+  subject            subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade, map: "question_subjectId_fkey")
+  topic              topic               @relation(fields: [topicId], references: [id], onDelete: Cascade, map: "question_topicId_fkey")
+  userFavQuestions   userfavquestion[]
+  userWrongQuestions userwrongquestion[]
+
+  @@index([questionTypeId], map: "Question_questionTypeId_fkey")
+  @@index([portionId], map: "Question_portionId_fkey")
+  @@index([subjectId], map: "Question_subjectId_fkey")
+  @@index([chapterId], map: "Question_chapterId_fkey")
+  @@index([topicId], map: "Question_topicId_fkey")
+}
+
+model pdf {
+  id          Int      @id @default(autoincrement())
+  name        String
+  url         String
+  portionId   Int?
+  subjectId   Int?
+  chapterId   Int?
+  topicId     Int?
+  createdAt   DateTime @default(now())
+  isOnlyTopic Boolean  @default(false)
+  isPremium   Boolean  @default(true)
+  chapter     chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade, map: "Pdf_chapterId_fkey")
+  portion     portion? @relation(fields: [portionId], references: [id], onDelete: Cascade, map: "Pdf_portionId_fkey")
+  subject     subject? @relation(fields: [subjectId], references: [id], onDelete: Cascade, map: "Pdf_subjectId_fkey")
+  topic       topic?   @relation(fields: [topicId], references: [id], onDelete: Cascade, map: "Pdf_topicId_fkey")
+
+  @@index([chapterId], map: "Pdf_chapterId_fkey")
+  @@index([portionId], map: "Pdf_portionId_fkey")
+  @@index([subjectId], map: "Pdf_subjectId_fkey")
+  @@index([topicId], map: "Pdf_topicId_fkey")
+}
+
+model questiontype {
+  id                  Int                      @id @default(autoincrement())
+  name                String
+  parentId            Int?
+  createdAt           DateTime                 @default(now())
+  isPremium           Boolean                  @default(true)
+  question            question[]
+  questiontype        questiontype?            @relation("questiontypeToquestiontype", fields: [parentId], references: [id], onDelete: Cascade, map: "questionType_parentId_fkey")
+  other_questiontype  questiontype[]           @relation("questiontypeToquestiontype")
+  testSeriesQuestions testseriesquestionbank[]
+
+  @@index([parentId], map: "questionType_parentId_fkey")
+}
+
+model testresult {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  score            Int
+  totalMarks       Int
+  answered         Int
+  correct          Int
+  wrong            Int
+  unanswered       Int
+  accuracy         Float
+  totalTimeTaken   Int
+  resultsByType    String   @db.LongText
+  resultsByChapter String   @db.LongText
+  resultsBySubject String   @db.LongText
+  allChapters      String?  @db.LongText
+  createdAt        DateTime @default(now())
+  responses        String?  @db.LongText
+  user             user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "TestResult_userId_fkey")
+
+  @@index([userId], map: "TestResult_userId_fkey")
+  @@index([createdAt])                 // getAllTestResults date filter
+  @@index([userId, createdAt])         // per-user history sorted by date
+}
+
+// Precomputed per-user analytics summary — recomputed (fire-and-forget,
+// non-blocking) after every createTestResult, from that user's last 50
+// testresult rows. Exists so "Mark Booster"-style fields (weakest
+// subject/chapter, recent accuracy) are a single cheap indexed row read
+// instead of parsing JSON blobs across a user's whole test history — the
+// original motivation was Send Notification's per-recipient template
+// variables, where doing that parsing live for every recipient of a bulk
+// send would risk the request hanging on "All Users" sends. All accuracy
+// fields are 0-100 percentages, matching testresult.accuracy's existing
+// convention.
+model useranalyticssummary {
+  id                     Int       @id @default(autoincrement())
+  userId                 Int       @unique
+  weakestSubject         String?
+  weakestSubjectAccuracy Float?
+  weakestChapter         String?
+  weakestChapterAccuracy Float?
+  weakestTopic           String?
+  weakestTopicAccuracy   Float?
+  overallAccuracy        Float?
+  totalTestsTaken        Int       @default(0)
+  lastScore              Int?
+  lastTotalMarks         Int?
+  lastAccuracy           Float?
+  lastTestDate           DateTime?
+  updatedAt              DateTime  @updatedAt
+  user                   user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model user {
+  id                 Int                 @id @default(autoincrement())
+  email              String?             @unique(map: "User_email_key")
+  name               String?
+  password           String?
+  role               String              @default("user")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime?
+  phoneNumber        String?             @unique(map: "User_phoneNumber_key")
+  age                Int?
+  gender             String?
+  profile            String?
+  premiumExpiry      DateTime?
+  status             UserStatus          @default(REGISTERED)
+  className          UserClass?
+  whatsappOtp        String?
+  whatsappOtpExp     DateTime?
+  fcmToken           String?
+  hasUsedTrial       Boolean             @default(false)
+  trialEndsAt        DateTime?
+  trialStartedAt     DateTime?
+  emailOtp           String?
+  emailOtpExp        DateTime?
+  deletedAt          DateTime?
+  payment            payment[]
+  testresult         testresult[]
+  useranalyticssummary useranalyticssummary?
+  userneetplan       userneetplan[]
+  userWrongQuestions userwrongquestion[]
+  tsOrders           testseriesorder[]
+  tsPurchases        testseriespurchase[]
+  tsBundlePurchases  testseriesbundlepurchase[]
+  tsResults          testseriesresult[]
+
+  @@index([status])               // filter PREMIUM / TRIALED users
+  @@index([role])                 // admin vs user queries
+  @@index([createdAt])            // admin dashboard growth metrics
+}
+
+model userwrongquestion {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  questionId Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  question   question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user       user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([questionId], map: "userwrongquestion_questionId_fkey")
+}
+
+model news {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String   @db.LongText
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model bannerupload {
+  id          Int              @id @default(autoincrement())
+  title       String?
+  imageUrl    String
+  redirectUrl String?
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  endAt       DateTime?
+  platform    BannerPlatform?
+  priority    Int              @default(0)
+  startAt     DateTime?
+  targetUsers Json             @default("[\"ALL\"]")
+  section     BannerSection    @default(HOME)
+
+  @@index([platform])
+  @@index([isActive])
+  @@index([section])
+  @@index([isActive, section, platform])
+}
+
+model userfavquestion {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  questionId Int
+  createdAt  DateTime @default(now())
+  question   question @relation(fields: [questionId], references: [id])
+
+  @@unique([userId, questionId])
+  @@index([userId])                    // fetch all favourites for a user
+  @@index([questionId], map: "userfavquestion_questionId_fkey")
+}
+
+model userfavtsquestion {
+  id         Int                    @id @default(autoincrement())
+  userId     Int
+  questionId Int
+  createdAt  DateTime               @default(now())
+  question   testseriesquestionbank @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([userId])
+  @@index([questionId])
+}
+
+model wrongquestionreport {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  reason     String
+  status     String   @default("pending")
+  sourceType String   @default("mock")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([questionId], map: "wrongquestionreport_questionId_fkey")
+}
+
+model freematerial {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?  @db.LongText
+  fileUrl     String
+  subjectId   Int
+  chapterId   Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([chapterId], map: "freematerial_chapterId_fkey")
+  @@index([subjectId], map: "freematerial_subjectId_fkey")
+}
+
+model notification {
+  id            Int       @id @default(autoincrement())
+  title         String
+  message       String    @db.LongText
+  finalMessage  String    @db.LongText
+  userId        Int
+  sentToAll     Boolean   @default(false)
+  imageUrl      String?
+  // React Navigation route name to open when this notification is tapped
+  // (both the OS push and the in-app notification list) — one of the
+  // curated options in admin's Send Notification screen, or null for "no
+  // deep link, just open the app".
+  deepLinkScreen String?
+  createdAt     DateTime  @default(now())
+  read          Boolean   @default(false)
+  readAt        DateTime?
+
+  @@index([userId])
+  @@index([userId, read])             // unread count query
+  @@index([userId, createdAt])        // notifications sorted by date
+  @@index([createdAt])                // retention cleanup job (cron/cleanupNotifications.js)
+}
+
+model coupon {
+  id         Int       @id @default(autoincrement())
+  code       String    @unique(map: "Coupon_code_key")
+  type       String
+  value      Int
+  isActive   Boolean   @default(true)
+  maxUsage   Int?
+  usedCount  Int       @default(0)
+  maxPerUser Int?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  payment    payment[]
+}
+
+model neetplan {
+  id            Int             @id @default(autoincrement())
+  code          String          @unique(map: "NeetPlan_code_key")
+  title         String
+  expiresAt     DateTime
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime
+  neetplanprice neetplanprice[]
+  payment       payment[]
+}
+
+model neetplanprice {
+  id                     Int                    @id @default(autoincrement())
+  planId                 Int
+  platform               neetplanprice_platform
+  price                  Float
+  currency               String                 @default("INR")
+  productId              String?
+  isActive               Boolean                @default(true)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime
+  discountedPrice        Float?
+  offerAmount            Float?
+  offerPercent           Int?
+  originalPrice          Float?
+  additionalOfferPercent Int?
+  finalPrice             Float?
+  mrp                    Float?
+  neetplan               neetplan               @relation(fields: [planId], references: [id], onDelete: Cascade, map: "NeetPlanPrice_planId_fkey")
+  payment                payment[]
+
+  @@index([planId], map: "NeetPlanPrice_planId_idx")
+  @@index([platform], map: "NeetPlanPrice_platform_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model payment {
+  id               Int                   @id @default(autoincrement())
+  userId           Int?
+  amount           Float
+  currency         String                @default("INR")
+  paymentMethod    payment_paymentMethod @default(ONLINE)
+  paymentStatus    payment_paymentStatus @default(PENDING)
+  transactionId    String?               @unique(map: "Payment_transactionId_key")
+  paymentGateway   String
+  gatewayResponse  String?               @db.LongText
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @default(now()) @updatedAt
+  subscriptionType String?
+  couponId         Int?
+  discountAmount   Float?                @default(0)
+  originalAmount   Float?
+  description      String?
+  neetPlanId       Int?
+  neetPlanPriceId  Int?
+  platform         payment_platform?
+  coupon           coupon?               @relation(fields: [couponId], references: [id], map: "Payment_couponId_fkey")
+  neetplan         neetplan?             @relation(fields: [neetPlanId], references: [id], map: "Payment_neetPlanId_fkey")
+  neetplanprice    neetplanprice?        @relation(fields: [neetPlanPriceId], references: [id], map: "Payment_neetPlanPriceId_fkey")
+  user             user?                 @relation(fields: [userId], references: [id], map: "Payment_userId_fkey")
+
+  @@index([couponId], map: "Payment_couponId_idx")
+  @@index([neetPlanId], map: "Payment_neetPlanId_fkey")
+  @@index([neetPlanPriceId], map: "Payment_neetPlanPriceId_fkey")
+  @@index([userId], map: "Payment_userId_idx")
+  @@index([paymentStatus])             // filter PENDING / COMPLETED payments
+  @@index([createdAt])                 // revenue by date range
+}
+
+model userneetplan {
+  id          Int                   @id @default(autoincrement())
+  userId      Int
+  planId      Int
+  priceId     Int
+  platform    userneetplan_platform
+  purchasedAt DateTime              @default(now())
+  expiresAt   DateTime
+  isActive    Boolean               @default(true)
+  user        user                  @relation(fields: [userId], references: [id], onDelete: Cascade, map: "UserNeetPlan_userId_fkey")
+
+  @@index([planId], map: "UserNeetPlan_planId_fkey")
+  @@index([priceId], map: "UserNeetPlan_priceId_fkey")
+  @@index([userId], map: "UserNeetPlan_userId_idx")
+}
+
+enum UserStatus {
+  REGISTERED
+  PREMIUM
+  SUSPENDED
+  TRIALED
+  DELETED
+}
+
+enum UserClass {
+  CLASS_11 @map("11")
+  CLASS_12 @map("12")
+  REPEATER @map("REPEATER")
+}
+
+enum BannerPlatform {
+  WEB_DESKTOP
+  WEB_MOBILE
+  MOBILE_APP
+}
+
+enum BannerSection {
+  HOME
+  TEST_SERIES
+  UPSELL
+}
+
+
+enum neetplanprice_platform {
+  WEB
+  ANDROID
+  IOS
+}
+
+enum payment_paymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  NET_BANKING
+  UPI
+  ONLINE
+  WALLET
+  EMI
+  PAY_LATER
+  BANK_TRANSFER
+  INTERNATIONAL
+  OTHER
+}
+
+enum userneetplan_platform {
+  WEB
+  ANDROID
+  IOS
+}
+
+enum payment_paymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum payment_platform {
+  WEB
+  ANDROID
+  IOS
+}
+
+// ─────────────────────────────────────────────
+// TEST SERIES MODELS
+// ─────────────────────────────────────────────
+
+model testseriespackage {
+  id              Int                  @id @default(autoincrement())
+  title           String
+  description     String?              @db.LongText
+  isActive        Boolean              @default(true)
+  // Marks the ONE package (e.g. "Daily Challenge Series") whose newest
+  // published test should surface as the Home screen's "Today's Test"
+  // card — explicit admin flag rather than matching on title text, so
+  // renaming the package doesn't silently break the card.
+  isDailyChallenge Boolean             @default(false)
+  price           Int                  @default(0)
+  mrp             Int?
+  physicalPrice   Int?
+  physicalMrp     Int?
+  features        Json?
+  paymentSubtitle String?
+  bannerImage     String?
+  bannerImages    Json?
+  position        Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  tests           testseriestest[]
+  orders          testseriesorder[]
+  purchases       testseriespurchase[]
+
+  @@index([isActive])
+  @@index([position])
+}
+
+model testseriestest {
+  id             Int                        @id @default(autoincrement())
+  packageId      Int
+  name           String
+  duration       Int                        @default(200)
+  totalQuestions Int                        @default(180)
+  isPublished    Boolean                    @default(false)
+  order          Int                        @default(0)
+  videoUrl       String?
+  syllabus       String?                    @db.LongText
+  notesUrl       String?
+  notesFileName  String?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  package        testseriespackage          @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  subjectConfigs testseriessubjectconfig[]
+  questions      testseriesquestion[]
+  results        testseriesresult[]
+
+  @@index([packageId])
+  @@index([packageId, order])          // ORDER BY order ASC query
+  @@index([packageId, isPublished])    // filter published tests per package
+}
+
+model testseriessubjectconfig {
+  id            Int            @id @default(autoincrement())
+  testId        Int
+  subjectName   String
+  questionCount Int
+  test          testseriestest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@index([testId])
+}
+
+model testseriesquestionbank {
+  id             Int                  @id @default(autoincrement())
+  subjectId      Int
+  chapterId      Int
+  topicId        Int?
+  questionTypeId Int?
+  question       String               @db.LongText
+  image          String?
+  optionA        String               @db.LongText
+  optionB        String               @db.LongText
+  optionC        String               @db.LongText
+  optionD        String               @db.LongText
+  correctOption  String
+  hint           String?              @db.LongText
+  hintImage      String?
+  difficulty     Int?                 @default(1)
+  videoUrl       String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  subject        subject              @relation(fields: [subjectId], references: [id])
+  chapter        chapter              @relation(fields: [chapterId], references: [id])
+  topic          topic?               @relation(fields: [topicId], references: [id])
+  questionType   questiontype?        @relation(fields: [questionTypeId], references: [id])
+  testQuestions  testseriesquestion[]
+  userFavTs      userfavtsquestion[]
+
+  @@index([subjectId])
+  @@index([chapterId])
+  @@index([topicId])
+  @@index([questionTypeId])
+}
+
+model testseriesquestion {
+  id         Int                    @id @default(autoincrement())
+  testId     Int
+  questionId Int
+  order      Int                    @default(0)
+  test       testseriestest         @relation(fields: [testId], references: [id], onDelete: Cascade)
+  question   testseriesquestionbank @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, questionId])
+  @@index([testId])
+  @@index([questionId])
+}
+
+model testseriesorder {
+  id              Int               @id @default(autoincrement())
+  userId          Int
+  packageId       Int
+  razorpayOrderId String            @unique
+  amount          Int
+  status          String            @default("PENDING")
+  purchaseType    String            @default("ETEST")
+  createdAt       DateTime          @default(now())
+  user            user              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package         testseriespackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([packageId])
+  @@index([status])                    // filter PENDING orders
+}
+
+model testseriespurchase {
+  id              Int               @id @default(autoincrement())
+  userId          Int
+  packageId       Int
+  razorpayOrderId String?
+  paymentId       String?           @unique
+  amount          Int
+  purchaseType    String            @default("ETEST")
+  purchasedAt     DateTime          @default(now())
+  shippingName    String?
+  shippingPhone   String?
+  shippingAddress String?
+  shippingCity    String?
+  shippingPincode String?
+  user            user              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package         testseriespackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, packageId])
+  @@index([userId])
+  @@index([packageId])
+}
+
+model testseriesbundle {
+  id              Int       @id @default(autoincrement())
+  price           Int
+  mrp             Int?
+  physicalPrice   Int?
+  physicalMrp     Int?
+  label           String?
+  title           String?
+  features        Json?
+  paymentSubtitle String?
+  bannerImages    Json?
+  isActive        Boolean   @default(true)
+  premiumExpiry   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model testseriesresult {
+  id               Int              @id @default(autoincrement())
+  userId           Int
+  testId           Int
+  score            Int
+  totalMarks       Int
+  correct          Int
+  wrong            Int
+  unanswered       Int
+  accuracy         Float
+  timeTaken        String
+  userAnswers      Json
+  resultsBySubject Json
+  resultsByType    Json?
+  attemptedAt      DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  user             user             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  test             testseriestest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, testId])
+  @@index([userId])
+  @@index([testId])
+}
+
+model testseriesbundlepurchase {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  razorpayOrderId String?
+  paymentId       String?  @unique
+  amount          Int
+  purchaseType    String   @default("ETEST")
+  purchasedAt     DateTime @default(now())
+  shippingName    String?
+  shippingPhone   String?
+  shippingAddress String?
+  shippingCity    String?
+  shippingPincode String?
+  user            user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@index([userId])
+}
+
+model subscriptionfeaturecategory {
+  id        Int                    @id @default(autoincrement())
+  name      String
+  sortOrder Int                    @default(0)
+  isActive  Boolean                @default(true)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  features  subscriptionfeature[]
+}
+
+model subscriptionfeature {
+  id         Int                           @id @default(autoincrement())
+  categoryId Int
+  name       String
+  freeValue  String                        @default("false")
+  premValue  String                        @default("true")
+  sortOrder  Int                           @default(0)
+  isActive   Boolean                       @default(true)
+  createdAt  DateTime                      @default(now())
+  updatedAt  DateTime                      @updatedAt
+  category   subscriptionfeaturecategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+}
+
+model appsetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
