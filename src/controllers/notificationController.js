@@ -195,34 +195,34 @@ exports.sendNotification = async (req, res) => {
       if (user.fcmToken) {
         const fcmMsg = {
           token: user.fcmToken,
-          // Deliberately no top-level `notification` key for Android: when
-          // one is present, Android auto-displays the notification itself
-          // using whichever channel config that device's OS cached the
-          // FIRST time it ever saw our channel ID — for installs going back
-          // a while, that can be a low/default-importance channel that
-          // silently drops the big-picture image, and the ONLY way to fix
-          // it per-device was reinstalling (which forces a fresh channel).
-          // Sending data-only instead routes every Android notification
-          // through our own setBackgroundMessageHandler (index.js) + Notifee,
-          // which creates/uses a channel with explicit HIGH importance and
-          // controls the image rendering directly — works the same on every
-          // install without needing anyone to reinstall. iOS still gets a
-          // real `notification`-shaped alert via apns.payload below since it
-          // has no equivalent stale-channel problem.
-          //
+          // TEMPORARILY back to a real `notification` key for Android —
+          // see git history for the data-only version and why it exists
+          // (stale per-device notification-channel caching silently
+          // dropping images). That version REQUIRES the mobile app's
+          // Notifee-based setBackgroundMessageHandler (index.js) to
+          // actually display the notification itself, since data-only
+          // messages give Android nothing to auto-display. That mobile
+          // code only ships in a NEW app build — every currently-installed
+          // app is still running the old JS with no such handler, so
+          // switching the backend to data-only before that build reached
+          // users meant NO push notification displayed at all (confirmed
+          // live 2026-08-19: in-app list still populated via `data`, but
+          // nothing appeared in the OS notification tray). Revert to this
+          // until the new app build has actually shipped and rolled out —
+          // only then should this go back to data-only, in the SAME
+          // deploy as (or after) that mobile release, not before it.
+          notification: {
+            title: personalizedTitle,
+            body: personalizedMessage,
+            ...(imageUrl && { imageUrl }),
+          },
           // FCM data payloads are flat string maps — screen is read by the
           // app's getInitialNotification/onNotificationOpenedApp/onMessage
-          // handlers (iOS) and Notifee's press events (Android) to navigate
-          // on tap. Omitted (not even an empty string) when there's no deep
-          // link, so the app can tell "no link configured" apart from "link
-          // is the empty string".
-          data: {
-            title: personalizedTitle,
-            message: personalizedMessage,
-            userId: String(user.id),
-            ...(imageUrl && { imageUrl }),
-            ...(deepLinkScreen ? { screen: deepLinkScreen } : {}),
-          },
+          // handlers to navigate on tap. Omitted (not even an empty
+          // string) when there's no deep link, so the app can tell
+          // "no link configured" apart from "link is the empty string".
+          data: { userId: String(user.id), ...(deepLinkScreen ? { screen: deepLinkScreen } : {}) },
+          android: imageUrl ? { notification: { imageUrl } } : undefined,
           apns: {
             payload: { aps: { alert: { title: personalizedTitle, body: personalizedMessage } } },
             ...(imageUrl && { fcmOptions: { imageUrl } }),
