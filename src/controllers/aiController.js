@@ -15,7 +15,13 @@ const aiServiceClient = axios.create({
 
 const forwardError = (res, error) => {
   const status = error.response?.status || 500;
-  const message = error.response?.data?.message || error.message;
+  // A response from ai-service carries a message it deliberately crafted
+  // for the client (e.g. the daily chat cap message) — safe to forward.
+  // No response at all means ai-service itself was unreachable, and
+  // error.message is then axios's own internal string (e.g. "connect
+  // ECONNREFUSED 127.0.0.1:4001") — never meant for a user to see.
+  const message = error.response?.data?.message || "Something went wrong. Please try again in a moment.";
+  if (!error.response) console.error("[aiController] ai-service unreachable:", error.message);
   res.status(status).json({ message });
 };
 
