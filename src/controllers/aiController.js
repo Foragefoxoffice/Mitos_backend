@@ -151,19 +151,35 @@ const buildGeneralUserContext = async (userId) => {
 
 const sendChatMessage = async (req, res) => {
   try {
-    const { questionId, message, hasAnswered } = req.body || {};
+    const { questionId, message, hasAnswered, sourceType } = req.body || {};
     if (!message) {
       return res.status(400).json({ message: "message is required" });
     }
 
     let questionContext = null;
     let userContext = null;
+    // "Ask AI" is reachable from Favorites, which mixes rows from TWO
+    // independent question tables with their own autoincrement PKs — the
+    // main `question` bank and `testseriesquestionbank` (Test Series). The
+    // same numeric questionId can legitimately point at two unrelated
+    // questions depending on which table it came from, so which table to
+    // query is NOT optional — guessing wrong (previously this always
+    // queried `question`) silently builds AI context from the wrong
+    // question entirely (confirmed live: a Test Series Biology question
+    // got answered using an unrelated Physics mock question's context).
+    // sourceType mirrors reportWrongQuestion's existing convention.
+    const isTestSeries = sourceType === "test-series";
 
     if (questionId) {
-      const question = await prisma.question.findUnique({
-        where: { id: Number(questionId) },
-        include: { subject: true, chapter: true, topic: true },
-      });
+      const question = isTestSeries
+        ? await prisma.testseriesquestionbank.findUnique({
+            where: { id: Number(questionId) },
+            include: { subject: true, chapter: true, topic: true, questionType: true },
+          })
+        : await prisma.question.findUnique({
+            where: { id: Number(questionId) },
+            include: { subject: true, chapter: true, topic: true, portion: true, questionType: true },
+          });
 
       if (!question) {
         return res.status(404).json({ message: "Question not found" });
@@ -176,9 +192,11 @@ const sendChatMessage = async (req, res) => {
         optionC: question.optionC,
         optionD: question.optionD,
         hint: question.hint,
+        portion: question.portion?.name ?? null, // Test Series questions have no portion
         subject: question.subject?.name,
         chapter: question.chapter?.name,
         topic: question.topic?.name,
+        questionType: question.questionType?.name ?? null,
         correctOption: hasAnswered ? question.correctOption : null,
       };
     } else {
@@ -192,6 +210,7 @@ const sendChatMessage = async (req, res) => {
       questionContext,
       userContext,
       isTrial: req.subscriptionTier === "trial",
+      source: isTestSeries ? "test-series" : "mock",
     });
 
     res.status(response.status).json(response.data);
@@ -202,8 +221,12 @@ const sendChatMessage = async (req, res) => {
 
 const getChatHistory = async (req, res) => {
   try {
+    // Must match sendChatMessage's source resolution — history for the same
+    // numeric questionId belongs to different sessions depending on which
+    // question table it came from (see the comment there).
+    const source = req.query.sourceType === "test-series" ? "test-series" : "mock";
     const response = await aiServiceClient.get(`/internal/ai/chat/history/${req.params.questionId}`, {
-      params: { userId: req.user.id },
+      params: { userId: req.user.id, source },
     });
     res.json(response.data);
   } catch (error) {
