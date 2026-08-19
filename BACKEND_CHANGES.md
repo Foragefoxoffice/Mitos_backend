@@ -2,6 +2,10 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-08-19
+
+- `src/controllers/notificationController.js` — `sendNotification` now skips users who already received a notification with the same raw `message` when the request has `recipientMode: 'date'` (set by admin's "By Date" send flow). Fixes a confirmed live bug: the "By Date" filter (e.g. "trial ends in next N days") is a stateless rolling window re-evaluated on every send, so re-running the same date-based broadcast on consecutive days kept re-matching — and re-notifying — students still inside the window. Verified one user received the identical "Trial Ends Today" notification 8 days in a row (Aug 10–19) before this fix. Scoped to date-filtered sends only — "All Users"/"By Status"/"Specific Users" sends are unaffected. Companion change in `admin/src/pages/admin/SendNotification.jsx` (sets `recipientMode: 'date'` on the payload).
+
 ## 2026-08-18
 
 - `cron/cleanupNotifications.js` (new), `server.js` — `notification` table had grown to 1.7GB (one row per recipient, so broadcast sends fan out to every user). New daily cron (2:30 AM) batch-deletes rows older than 10 days, 5,000 at a time, to avoid a long-running lock. Wired into `server.js` next to the existing `expireSubscriptions` cron. One-time backfill cleanup run live against the shared DB: table went from ~4M rows (1.7GB) to 407,901 rows (everything within the last 10 days) — no schema/data-loss risk, this only ever deletes past-retention rows.

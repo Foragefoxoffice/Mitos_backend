@@ -172,6 +172,38 @@ exports.sendNotification = async (req, res) => {
     }
 
     /* --------------------------------------------------
+       SKIP ALREADY-NOTIFIED USERS (date-filtered sends only)
+       "By Date" recipients (e.g. "trial ends in next 3 days") are a
+       rolling window re-evaluated fresh on every send — a student still
+       inside that window tomorrow matches again even though they already
+       got this exact reminder today. Without this guard, re-running the
+       same date-based send daily re-notifies the same student every day
+       until their trial/premium actually expires (confirmed live: one
+       student got the identical "Trial Ends Today" message 8 days in a
+       row). `message` stores the raw un-personalized template — same
+       value across all recipients of a given campaign and across repeat
+       sends of it — so matching on (userId, message) reliably identifies
+       "already got this campaign" regardless of the per-user {{name}} in
+       the title.
+    -------------------------------------------------- */
+    if (req.body.recipientMode === 'date') {
+      const alreadyNotified = await prisma.notification.findMany({
+        where: { userId: { in: users.map(u => u.id) }, message },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+      const alreadyNotifiedIds = new Set(alreadyNotified.map(n => n.userId));
+      users = users.filter(u => !alreadyNotifiedIds.has(u.id));
+
+      if (users.length === 0) {
+        return res.status(200).json({
+          message: "All matching users already received this notification — nothing new to send.",
+          totalUsers: 0,
+        });
+      }
+    }
+
+    /* --------------------------------------------------
        CREATE & SEND NOTIFICATIONS
     -------------------------------------------------- */
     const notificationsToCreate = [];
