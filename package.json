@@ -34,7 +34,8 @@
     "nodemailer": "^7.0.7",
     "prisma": "^6.1.0",
     "razorpay": "^2.9.6",
-    "redis": "^4.7.0"
+    "redis": "^4.7.0",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "jest": "^30.4.2",

@@ -1,6 +1,8 @@
 const prisma = require("../utils/prisma");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
+const sharp = require("sharp");
 const admin = require("../../firebase");
 
 const storage = multer.diskStorage({
@@ -11,6 +13,24 @@ const storage = multer.diskStorage({
   },
 });
 exports.uploadNotifImage = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }).single("image");
+
+// Native Android/iOS notification trays silently drop the image (falling
+// back to text-only) once it's roughly over ~500KB — confirmed via a live
+// A/B test where a 1.4-1.8MB banner never rendered but the same banner
+// compressed to ~176KB did. Admin can upload up to 5MB, so every upload
+// gets normalized here rather than relying on whoever's sending to
+// remember to pre-compress. Always re-encodes to JPEG (smaller than PNG
+// for photo/banner content) and writes a new file — sharp can't read and
+// write the same path in place.
+const compressNotifImage = async (filePath) => {
+  const compressedPath = filePath.replace(/\.[^.]+$/, "") + "_compressed.jpg";
+  await sharp(filePath)
+    .resize({ width: 1080, withoutEnlargement: true })
+    .jpeg({ quality: 75 })
+    .toFile(compressedPath);
+  fs.unlink(filePath, () => {});
+  return compressedPath;
+};
 
 const formatPercent = (value) => (value == null ? "" : `${Math.round(value)}%`);
 
@@ -40,9 +60,15 @@ function renderTemplate(template, user) {
 // POST /api/notifications/upload-image  — upload image, get back public URL
 exports.uploadNotifImageOnly = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: "No image file provided" });
-  const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
-  const imageUrl = `${baseUrl}/uploads/${req.file.filename}`;
-  res.json({ imageUrl });
+  try {
+    const compressedPath = await compressNotifImage(req.file.path);
+    const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const imageUrl = `${baseUrl}/uploads/${path.basename(compressedPath)}`;
+    res.json({ imageUrl });
+  } catch (error) {
+    console.error("uploadNotifImageOnly compression error:", error);
+    res.status(500).json({ message: "Failed to process image" });
+  }
 };
 
 // POST /api/notifications/send
@@ -55,7 +81,7 @@ exports.sendNotification = async (req, res) => {
     if (userIds) userIds = userIds.map(Number);
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const imageUrl = req.file
-      ? `${baseUrl}/uploads/${req.file.filename}`
+      ? `${baseUrl}/uploads/${path.basename(await compressNotifImage(req.file.path))}`
       : (req.body.imageUrl || null);
 
     console.log("DEBUG: sendNotification payload:", JSON.stringify(req.body, null, 2));
@@ -169,19 +195,38 @@ exports.sendNotification = async (req, res) => {
       if (user.fcmToken) {
         const fcmMsg = {
           token: user.fcmToken,
-          notification: {
-            title: personalizedTitle,
-            body: personalizedMessage,
-            ...(imageUrl && { imageUrl }),
-          },
+          // Deliberately no top-level `notification` key for Android: when
+          // one is present, Android auto-displays the notification itself
+          // using whichever channel config that device's OS cached the
+          // FIRST time it ever saw our channel ID — for installs going back
+          // a while, that can be a low/default-importance channel that
+          // silently drops the big-picture image, and the ONLY way to fix
+          // it per-device was reinstalling (which forces a fresh channel).
+          // Sending data-only instead routes every Android notification
+          // through our own setBackgroundMessageHandler (index.js) + Notifee,
+          // which creates/uses a channel with explicit HIGH importance and
+          // controls the image rendering directly — works the same on every
+          // install without needing anyone to reinstall. iOS still gets a
+          // real `notification`-shaped alert via apns.payload below since it
+          // has no equivalent stale-channel problem.
+          //
           // FCM data payloads are flat string maps — screen is read by the
           // app's getInitialNotification/onNotificationOpenedApp/onMessage
-          // handlers to navigate on tap. Omitted (not even an empty
-          // string) when there's no deep link, so the app can tell
-          // "no link configured" apart from "link is the empty string".
-          data: { userId: String(user.id), ...(deepLinkScreen ? { screen: deepLinkScreen } : {}) },
-          android: imageUrl ? { notification: { imageUrl } } : undefined,
-          apns: imageUrl ? { payload: { aps: {} }, fcmOptions: { imageUrl } } : undefined,
+          // handlers (iOS) and Notifee's press events (Android) to navigate
+          // on tap. Omitted (not even an empty string) when there's no deep
+          // link, so the app can tell "no link configured" apart from "link
+          // is the empty string".
+          data: {
+            title: personalizedTitle,
+            message: personalizedMessage,
+            userId: String(user.id),
+            ...(imageUrl && { imageUrl }),
+            ...(deepLinkScreen ? { screen: deepLinkScreen } : {}),
+          },
+          apns: {
+            payload: { aps: { alert: { title: personalizedTitle, body: personalizedMessage } } },
+            ...(imageUrl && { fcmOptions: { imageUrl } }),
+          },
         };
         admin.messaging().send(fcmMsg).catch(err => {
           console.error(`FCM error for user ${user.id}`, err.message);
