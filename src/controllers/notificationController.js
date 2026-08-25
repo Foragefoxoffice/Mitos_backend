@@ -256,7 +256,15 @@ exports.sendNotification = async (req, res) => {
           data: { userId: String(user.id), ...(deepLinkScreen ? { screen: deepLinkScreen } : {}) },
           android: imageUrl ? { notification: { imageUrl } } : undefined,
           apns: {
-            payload: { aps: { alert: { title: personalizedTitle, body: personalizedMessage } } },
+            payload: {
+              aps: {
+                alert: { title: personalizedTitle, body: personalizedMessage },
+                // Required for iOS to invoke the Notification Service
+                // Extension that downloads fcmOptions.imageUrl below —
+                // without this flag the image is silently dropped.
+                ...(imageUrl && { 'mutable-content': 1 }),
+              },
+            },
             ...(imageUrl && { fcmOptions: { imageUrl } }),
           },
         };
