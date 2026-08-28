@@ -34,6 +34,61 @@ const compressNotifImage = async (filePath) => {
 
 const formatPercent = (value) => (value == null ? "" : `${Math.round(value)}%`);
 
+// Confirmed live 2026-08-28: one trial user (10 days into a still-active
+// trial) received 80 admin notifications in 14 days — the same ~6-message
+// daily batch, re-sent every day, to the entire active-trial population,
+// with zero tracking of who'd already gotten it. Root cause was that the
+// "skip anyone who already got this" check only ran for `recipientMode
+// === 'date'` sends — "By Status" sends (which this pattern's timing/
+// message repetition strongly points to) had no such check at all. Admin-
+// configurable via the same generic `appsetting` key/value store
+// getChatCreditCaps() in aiController.js uses for AI Chat's caps — same
+// reasoning: change it from App Settings without a code deploy.
+const DEFAULT_NOTIFICATION_DAILY_CAP = 5;
+const getNotificationDailyCap = async () => {
+  const row = await prisma.appsetting.findUnique({ where: { key: "notification_daily_cap_per_user" } });
+  return Number(row?.value) || DEFAULT_NOTIFICATION_DAILY_CAP;
+};
+
+// Trial/Premium "active" vs "expired" is always derived from these two
+// date columns (trialStartedAt/trialEndsAt/premiumExpiry) compared against
+// the current moment — never from a separate cached status flag, which
+// could be stale until the next run of cron/expireSubscriptions.js. Same
+// convention the existing subscriptionStatus TRIAL/TRIALED branches below
+// already use (both query status:'TRIALED', distinguished only by
+// trialEndsAt vs now) — this extends that same date-driven approach to
+// the "By Date" recipient filter instead of trusting a client-computed
+// id list, which can only ever be as fresh as whenever the admin's browser
+// tab last loaded the user list.
+const VALID_DATE_FIELDS = ["trialStartedAt", "trialEndsAt", "premiumExpiry"];
+const buildDateFilterWhere = ({ field, condition, days }) => {
+  if (!VALID_DATE_FIELDS.includes(field)) return null;
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const n = Math.max(1, Number(days) || 1);
+
+  if (condition === "today") {
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+    return { [field]: { gte: todayStart, lt: tomorrowStart } };
+  }
+  if (condition === "in_next") {
+    // Inclusive of today through N days ahead (matches admin UI's own
+    // "diffDays >= 0 && diffDays <= days" semantics).
+    const rangeEnd = new Date(todayStart);
+    rangeEnd.setDate(rangeEnd.getDate() + n + 1);
+    return { [field]: { gte: todayStart, lt: rangeEnd } };
+  }
+  if (condition === "expired_within") {
+    // Strictly in the past (excludes today), within the last N days.
+    const rangeStart = new Date(todayStart);
+    rangeStart.setDate(rangeStart.getDate() - n);
+    return { [field]: { gte: rangeStart, lt: todayStart } };
+  }
+  return null;
+};
+
 // Simple template renderer. Mark Booster fields come from
 // useranalyticssummary (joined on every findMany below, not a per-user
 // query) — see src/utils/userAnalyticsSummary.js for how that gets kept
@@ -95,9 +150,35 @@ exports.sendNotification = async (req, res) => {
     let users = [];
 
     /* --------------------------------------------------
+       0️⃣ SEND BY DATE FILTER (highest priority) — recomputed here from
+       dateField/condition/days, NOT from any client-supplied userIds.
+       The admin panel still shows a live "N users match" count computed
+       client-side for instant feedback while adjusting the filter, but
+       that's only ever as fresh as whenever the browser tab last loaded
+       the user list — trusting it for the actual send meant a stale tab
+       left open for hours (or a slow-changing trial/premium date) could
+       send to the wrong set. This branch always re-runs the filter
+       against live data at the moment Send is actually clicked.
+    -------------------------------------------------- */
+    if (req.body.recipientMode === 'date' && req.body.dateField) {
+      const dateWhere = buildDateFilterWhere({
+        field: req.body.dateField,
+        condition: req.body.condition,
+        days: req.body.days,
+      });
+      if (!dateWhere) {
+        return res.status(400).json({ message: "Invalid date filter (dateField/condition/days)" });
+      }
+      users = await prisma.user.findMany({
+        where: dateWhere,
+        include: { useranalyticssummary: true },
+      });
+    }
+
+    /* --------------------------------------------------
        1️⃣ SEND TO USERS BY SUBSCRIPTION STATUS (Priority)
     -------------------------------------------------- */
-    if (subscriptionStatus && subscriptionStatus !== 'ALL') {
+    else if (subscriptionStatus && subscriptionStatus !== 'ALL') {
       const now = new Date();
 
       if (subscriptionStatus === 'TRIAL') {
@@ -172,35 +253,64 @@ exports.sendNotification = async (req, res) => {
     }
 
     /* --------------------------------------------------
-       SKIP ALREADY-NOTIFIED USERS (date-filtered sends only)
-       "By Date" recipients (e.g. "trial ends in next 3 days") are a
-       rolling window re-evaluated fresh on every send — a student still
-       inside that window tomorrow matches again even though they already
-       got this exact reminder today. Without this guard, re-running the
-       same date-based send daily re-notifies the same student every day
-       until their trial/premium actually expires (confirmed live: one
-       student got the identical "Trial Ends Today" message 8 days in a
-       row). `message` stores the raw un-personalized template — same
-       value across all recipients of a given campaign and across repeat
-       sends of it — so matching on (userId, message) reliably identifies
-       "already got this campaign" regardless of the per-user {{name}} in
-       the title.
+       SKIP ALREADY-NOTIFIED USERS — applies to EVERY send type, not just
+       "By Date". Originally gated behind recipientMode === 'date' only;
+       that gap is exactly what let a "By Status: Trial Users" send
+       re-blast the entire active-trial population daily with zero memory
+       of who'd already gotten it (confirmed live 2026-08-28: one student
+       received the same ~6-message batch every day for 14 days, 80
+       notifications total, most while still weeks from their trial
+       actually ending). `message` stores the raw un-personalized
+       template — same value across all recipients of a given campaign and
+       across repeat sends of it — so matching on (userId, message)
+       reliably identifies "already got this campaign" regardless of the
+       per-user {{name}} in the title.
     -------------------------------------------------- */
-    if (req.body.recipientMode === 'date') {
-      const alreadyNotified = await prisma.notification.findMany({
-        where: { userId: { in: users.map(u => u.id) }, message },
-        select: { userId: true },
-        distinct: ['userId'],
-      });
-      const alreadyNotifiedIds = new Set(alreadyNotified.map(n => n.userId));
-      users = users.filter(u => !alreadyNotifiedIds.has(u.id));
+    const beforeDedupeCount = users.length;
+    const alreadyNotified = await prisma.notification.findMany({
+      where: { userId: { in: users.map(u => u.id) }, message },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+    const alreadyNotifiedIds = new Set(alreadyNotified.map(n => n.userId));
+    users = users.filter(u => !alreadyNotifiedIds.has(u.id));
+    const skippedAlreadyNotified = beforeDedupeCount - users.length;
 
-      if (users.length === 0) {
-        return res.status(200).json({
-          message: "All matching users already received this notification — nothing new to send.",
-          totalUsers: 0,
-        });
-      }
+    if (users.length === 0) {
+      return res.status(200).json({
+        message: "All matching users already received this notification — nothing new to send.",
+        totalUsers: 0,
+        skippedAlreadyNotified,
+      });
+    }
+
+    /* --------------------------------------------------
+       RESPECT PER-USER DAILY CAP — a blunt safety net independent of the
+       dedup check above, so a genuinely NEW/varied message still can't
+       pile onto a user who's already gotten several notifications today
+       (e.g. multiple distinct campaigns sent back-to-back in one admin
+       session). Admin-editable via App Settings (see
+       getNotificationDailyCap above); default 5/day.
+    -------------------------------------------------- */
+    const dailyCap = await getNotificationDailyCap();
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentCounts = await prisma.notification.groupBy({
+      by: ['userId'],
+      where: { userId: { in: users.map(u => u.id) }, createdAt: { gte: since24h } },
+      _count: { id: true },
+    });
+    const overCapIds = new Set(recentCounts.filter(r => r._count.id >= dailyCap).map(r => r.userId));
+    const beforeCapCount = users.length;
+    users = users.filter(u => !overCapIds.has(u.id));
+    const skippedDailyCap = beforeCapCount - users.length;
+
+    if (users.length === 0) {
+      return res.status(200).json({
+        message: `All remaining matching users have already hit today's ${dailyCap}-notification cap — nothing sent.`,
+        totalUsers: 0,
+        skippedAlreadyNotified,
+        skippedDailyCap,
+      });
     }
 
     /* --------------------------------------------------
@@ -283,6 +393,8 @@ exports.sendNotification = async (req, res) => {
         ? "Notification sent to all users"
         : "Notification sent to selected users",
       totalUsers: users.length,
+      skippedAlreadyNotified,
+      skippedDailyCap,
     });
   } catch (error) {
     console.error("Error sending notification:", error);
