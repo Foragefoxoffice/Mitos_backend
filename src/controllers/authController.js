@@ -30,9 +30,30 @@ function normalizePhone(phone) {
 /* ======================================================
    DUMMY TESTER CONSTANTS
 ====================================================== */
-const DUMMY_TEST_NUMBER = "+919844444455";
-const DUMMY_TEST_EMAIL = "tester@playstore.com";
 const DUMMY_OTP = "123456";
+
+// App Store / Play Store reviewer accounts. Each bypasses real OTP delivery
+// (fixed DUMMY_OTP, no SMS sent) so a reviewer can sign in with just the
+// phone number + this code. `seed`, when set, is re-applied on every OTP
+// verify so the account's subscription state stays consistent across
+// review rounds regardless of what a previous reviewer did in-app.
+const DUMMY_TEST_ACCOUNTS = {
+  "+919844444455": {
+    email: "tester@playstore.com",
+    name: "Play Store Tester",
+    seed: null, // pre-existing premium demo account; state managed manually
+  },
+  "+919844444456": {
+    email: "tester.expired@appreview.com",
+    name: "App Review Tester (Expired Premium)",
+    seed: { status: "SUSPENDED", premiumExpiry: null, trialEndsAt: null, hasUsedTrial: true },
+  },
+  "+919844444457": {
+    email: "tester.registered@appreview.com",
+    name: "App Review Tester (Registered)",
+    seed: { status: "REGISTERED", premiumExpiry: null, trialEndsAt: null, hasUsedTrial: false },
+  },
+};
 
 /* ======================================================
    REGISTER (email/password)
@@ -191,7 +212,7 @@ const sendWhatsappOtp = async (req, res) => {
     phoneNumber = normalizePhone(phoneNumber);
 
     // Dummy tester
-    if (phoneNumber === DUMMY_TEST_NUMBER) {
+    if (DUMMY_TEST_ACCOUNTS[phoneNumber]) {
       return res.json({
         message: "OTP sent (TEST MODE)",
         otp: DUMMY_OTP,
@@ -238,7 +259,8 @@ const verifyWhatsappOtp = async (req, res) => {
     phoneNumber = normalizePhone(phoneNumber);
 
     // Dummy tester
-    if (phoneNumber === DUMMY_TEST_NUMBER && otp === DUMMY_OTP) {
+    const dummyAccount = DUMMY_TEST_ACCOUNTS[phoneNumber];
+    if (dummyAccount && otp === DUMMY_OTP) {
       let user = await prisma.user.findFirst({
         where: { phoneNumber },
       });
@@ -247,11 +269,17 @@ const verifyWhatsappOtp = async (req, res) => {
         user = await prisma.user.create({
           data: {
             phoneNumber,
-            email: DUMMY_TEST_EMAIL,
-            name: "Play Store Tester",
+            email: dummyAccount.email,
+            name: dummyAccount.name,
             role: "user",
             password: "",
+            ...(dummyAccount.seed || {}),
           },
+        });
+      } else if (dummyAccount.seed) {
+        user = await prisma.user.update({
+          where: { phoneNumber },
+          data: dummyAccount.seed,
         });
       }
 

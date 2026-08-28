@@ -22,6 +22,20 @@ router.post("/dictionary/retry-failed", verifyAdmin, ctrl.retryFailedDictionaryT
 router.get("/dictionary/for-question/:questionId", authenticateUser, ctrl.getTermsForQuestion);
 router.get("/dictionary/term/:term", authenticateUser, requirePremium, ctrl.getTermExplanation);
 
+// Test Series — same shape, separate job/question source (see
+// aiController.js). listEntries/retry endpoints aren't duplicated: terms
+// are shared across sources, so the existing dictionary/entries page
+// already shows everything both jobs produce.
+router.post("/test-series-dictionary/generate-batch", verifyAdmin, ctrl.runTestSeriesDictionaryBatch);
+router.post("/test-series-dictionary/auto/start", verifyAdmin, ctrl.startTestSeriesDictionaryAutoRun);
+router.post("/test-series-dictionary/auto/stop", verifyAdmin, ctrl.stopTestSeriesDictionaryAutoRun);
+router.get("/test-series-dictionary/progress", verifyAdmin, ctrl.getTestSeriesDictionaryProgress);
+router.get(
+  "/test-series-dictionary/for-question/:questionId",
+  authenticateUser,
+  ctrl.getTestSeriesTermsForQuestion
+);
+
 // Student-facing: per-question AI chat. Writes user-attributed data and
 // has a daily cap to enforce (see CHAT_DAILY_MESSAGE_CAP in ai-service).
 router.post("/chat/message", authenticateUser, requirePremium, ctrl.sendChatMessage);

@@ -25,6 +25,61 @@ const forwardError = (res, error) => {
   res.status(status).json({ message });
 };
 
+// A user-facing "Something went wrong" was traced (2026-08-27) to
+// ai-service being mid-restart when a chat request landed — a real gap
+// (now ~0.2-0.3s with PM2, was ~5s+ with manual restarts) that a student
+// can still land in. `error.response` is only set when ai-service
+// actually answered (including its own real errors, e.g. daily cap
+// exceeded) — those must surface immediately, never retried. A missing
+// `error.response` with a connection-level code means the TCP connection
+// itself never completed, so ai-service never received the request at
+// all — safe to retry with zero risk of double-processing (unlike a
+// timeout, where ai-service may have already received and be acting on
+// the original request; timeouts are deliberately NOT retried here for
+// that reason).
+const isRetryableNetworkError = (error) =>
+  !error.response && ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EHOSTUNREACH"].includes(error.code);
+
+const withRetry = async (fn, { retries = 2, delayMs = 700 } = {}) => {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries && isRetryableNetworkError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+};
+
+// Admin-editable via the App Settings page (generic `appsetting` key/value
+// store — see settingController.js), not a dedicated table: these two
+// values only exist to override ai-service's own hardcoded env-var
+// defaults, so reusing the existing generic settings mechanism avoids a
+// whole new table + admin endpoint for two numbers. Defaults here match
+// ai-service's own fallback constants, so an unset key behaves exactly as
+// it did before this existed.
+const DEFAULT_DAILY_CAP = 100;
+const DEFAULT_TRIAL_CAP = 10;
+
+const getChatCreditCaps = async () => {
+  const rows = await prisma.appsetting.findMany({
+    where: { key: { in: ["ai_chat_daily_cap", "ai_chat_trial_cap"] } },
+  });
+  const byKey = {};
+  rows.forEach((r) => { byKey[r.key] = r.value; });
+
+  return {
+    dailyCap: Number(byKey.ai_chat_daily_cap) || DEFAULT_DAILY_CAP,
+    trialCap: Number(byKey.ai_chat_trial_cap) || DEFAULT_TRIAL_CAP,
+  };
+};
+
 const runDictionaryBatch = async (req, res) => {
   try {
     const { batchSize } = req.body || {};
@@ -109,6 +164,58 @@ const stopDictionaryAutoRun = async (req, res) => {
   try {
     const response = await aiServiceClient.post("/internal/ai/dictionary/auto/stop");
     res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+// Sibling proxy set for Test Series questions — same shape as the
+// dictionary/* endpoints above, pointed at ai-service's separate
+// test-series job (own question source, own ai_job row, own
+// ai_dictionary_mapping.source tag; shares the same underlying term
+// dictionary — see ai-service's createDictionaryBatchJob.js).
+const runTestSeriesDictionaryBatch = async (req, res) => {
+  try {
+    const { batchSize } = req.body || {};
+    const response = await aiServiceClient.post("/internal/ai/test-series-dictionary/generate-batch", { batchSize });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getTestSeriesDictionaryProgress = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/test-series-dictionary/progress");
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const startTestSeriesDictionaryAutoRun = async (req, res) => {
+  try {
+    const response = await aiServiceClient.post("/internal/ai/test-series-dictionary/auto/start");
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const stopTestSeriesDictionaryAutoRun = async (req, res) => {
+  try {
+    const response = await aiServiceClient.post("/internal/ai/test-series-dictionary/auto/stop");
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getTestSeriesTermsForQuestion = async (req, res) => {
+  try {
+    const { questionId } = req.params;
+    const response = await aiServiceClient.get(`/internal/ai/test-series-dictionary/for-question/${questionId}`);
+    res.json(response.data);
   } catch (error) {
     forwardError(res, error);
   }
@@ -203,15 +310,21 @@ const sendChatMessage = async (req, res) => {
       userContext = await buildGeneralUserContext(req.user.id);
     }
 
-    const response = await aiServiceClient.post("/internal/ai/chat/message", {
-      userId: req.user.id,
-      questionId: questionId ? Number(questionId) : null,
-      message,
-      questionContext,
-      userContext,
-      isTrial: req.subscriptionTier === "trial",
-      source: isTestSeries ? "test-series" : "mock",
-    });
+    const { dailyCap, trialCap } = await getChatCreditCaps();
+
+    const response = await withRetry(() =>
+      aiServiceClient.post("/internal/ai/chat/message", {
+        userId: req.user.id,
+        questionId: questionId ? Number(questionId) : null,
+        message,
+        questionContext,
+        userContext,
+        isTrial: req.subscriptionTier === "trial",
+        source: isTestSeries ? "test-series" : "mock",
+        dailyCap,
+        trialCap,
+      })
+    );
 
     res.status(response.status).json(response.data);
   } catch (error) {
@@ -225,9 +338,11 @@ const getChatHistory = async (req, res) => {
     // numeric questionId belongs to different sessions depending on which
     // question table it came from (see the comment there).
     const source = req.query.sourceType === "test-series" ? "test-series" : "mock";
-    const response = await aiServiceClient.get(`/internal/ai/chat/history/${req.params.questionId}`, {
-      params: { userId: req.user.id, source },
-    });
+    const response = await withRetry(() =>
+      aiServiceClient.get(`/internal/ai/chat/history/${req.params.questionId}`, {
+        params: { userId: req.user.id, source },
+      })
+    );
     res.json(response.data);
   } catch (error) {
     forwardError(res, error);
@@ -240,9 +355,12 @@ const getChatHistory = async (req, res) => {
 // comes from requirePremium, which already looked this up for the route gate.
 const getChatQuota = async (req, res) => {
   try {
-    const response = await aiServiceClient.get("/internal/ai/chat/quota", {
-      params: { userId: req.user.id, isTrial: req.subscriptionTier === "trial" },
-    });
+    const { dailyCap, trialCap } = await getChatCreditCaps();
+    const response = await withRetry(() =>
+      aiServiceClient.get("/internal/ai/chat/quota", {
+        params: { userId: req.user.id, isTrial: req.subscriptionTier === "trial", dailyCap, trialCap },
+      })
+    );
     res.json(response.data);
   } catch (error) {
     forwardError(res, error);
@@ -291,6 +409,11 @@ module.exports = {
   stopDictionaryAutoRun,
   retryDictionaryTerm,
   retryFailedDictionaryTerms,
+  runTestSeriesDictionaryBatch,
+  getTestSeriesDictionaryProgress,
+  startTestSeriesDictionaryAutoRun,
+  stopTestSeriesDictionaryAutoRun,
+  getTestSeriesTermsForQuestion,
   sendChatMessage,
   getChatHistory,
   getChatQuota,
