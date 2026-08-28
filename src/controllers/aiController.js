@@ -312,18 +312,35 @@ const sendChatMessage = async (req, res) => {
 
     const { dailyCap, trialCap } = await getChatCreditCaps();
 
+    // Overrides aiServiceClient's global 15s default (fine for quick DB
+    // lookups elsewhere in this file, not for this one) to match the
+    // mobile client's own 60s timeout on sendChatMessage — see api.js's
+    // comment there on why complex/step-by-step replies routinely take
+    // longer than 15s. Without this, the backend gave up on ai-service
+    // before ai-service gave up on the AI provider: the student saw
+    // "Something went wrong" at 15s while ai-service kept running in the
+    // background and (with the credit-on-success fix above) eventually
+    // wrote a real, credit-consuming success the student never got to
+    // see — then their retry burned a second credit for the reply they
+    // actually received. Reported 2026-08-28, reproduced twice on
+    // "Explain this question step by step" specifically, the slow
+    // complex-tier prompt this mismatch hits hardest.
     const response = await withRetry(() =>
-      aiServiceClient.post("/internal/ai/chat/message", {
-        userId: req.user.id,
-        questionId: questionId ? Number(questionId) : null,
-        message,
-        questionContext,
-        userContext,
-        isTrial: req.subscriptionTier === "trial",
-        source: isTestSeries ? "test-series" : "mock",
-        dailyCap,
-        trialCap,
-      })
+      aiServiceClient.post(
+        "/internal/ai/chat/message",
+        {
+          userId: req.user.id,
+          questionId: questionId ? Number(questionId) : null,
+          message,
+          questionContext,
+          userContext,
+          isTrial: req.subscriptionTier === "trial",
+          source: isTestSeries ? "test-series" : "mock",
+          dailyCap,
+          trialCap,
+        },
+        { timeout: 60000 }
+      )
     );
 
     res.status(response.status).json(response.data);
