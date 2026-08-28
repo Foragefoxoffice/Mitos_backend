@@ -227,19 +227,29 @@ const getTestSeriesTermsForQuestion = async (req, res) => {
 // can answer questions about it. Rank computed the same way
 // testController.js's getLeaderboard falls back for an out-of-top-list
 // user — no separate leaderboard table to look up directly.
+// CLASS_11/CLASS_12/REPEATER (schema enum) -> what the AI should actually
+// read, not the raw DB token.
+const CLASS_NAME_LABELS = {
+  CLASS_11: "Class 11",
+  CLASS_12: "Class 12",
+  REPEATER: "Repeater (both Class 11 and Class 12 syllabus)",
+};
+
 const buildGeneralUserContext = async (userId) => {
-  const [summary, allRanked] = await Promise.all([
+  const [summary, allRanked, user] = await Promise.all([
     prisma.useranalyticssummary.findUnique({ where: { userId } }),
     prisma.testresult.groupBy({
       by: ["userId"],
       _sum: { score: true, totalMarks: true },
       orderBy: { _sum: { score: "desc" } },
     }),
+    prisma.user.findUnique({ where: { id: userId }, select: { className: true } }),
   ]);
 
   const rankIndex = allRanked.findIndex((e) => e.userId === userId);
 
   return {
+    className: CLASS_NAME_LABELS[user?.className] || null,
     weakestSubject: summary?.weakestSubject || null,
     weakestSubjectAccuracy: summary?.weakestSubjectAccuracy ?? null,
     weakestChapter: summary?.weakestChapter || null,
