@@ -221,6 +221,64 @@ const getTestSeriesTermsForQuestion = async (req, res) => {
   }
 };
 
+// Regional Language Translation — mirrors the dictionary proxy functions
+// above exactly. One controller (not a practice/test_series split like
+// dictionary has) since ai-service's translationController.js already
+// takes `source` as a body/query param and handles routing to the right
+// job instance itself — see that file's runnerFor().
+const runTranslationBatch = async (req, res) => {
+  try {
+    const { batchSize, source } = req.body || {};
+    const response = await aiServiceClient.post("/internal/ai/translation/generate-batch", { batchSize, source });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getTranslationProgress = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/translation/progress");
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getTranslationEntries = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/translation/entries", { params: req.query });
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getTranslationLanguages = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/translation/languages");
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+// Student-facing — falls back to English (translation: null) rather than
+// erroring when nothing's been generated yet for this question+language,
+// same "always return something renderable" contract as ai-service's
+// getTranslationForQuestion.
+const getQuestionTranslation = async (req, res) => {
+  try {
+    const { questionId } = req.params;
+    const response = await aiServiceClient.get(`/internal/ai/translation/for-question/${questionId}`, {
+      params: { source: req.query.source, lang: req.query.lang },
+    });
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
 // Home screen's "Ask Mitos AI" card has no question in view — builds the
 // student's own Mark Booster/Score Predictor/Leaderboard data instead, so
 // ai-service's general-mode prompt (chatPrompt.js's buildGeneralSystemPrompt)
@@ -441,6 +499,11 @@ module.exports = {
   startTestSeriesDictionaryAutoRun,
   stopTestSeriesDictionaryAutoRun,
   getTestSeriesTermsForQuestion,
+  runTranslationBatch,
+  getTranslationProgress,
+  getTranslationEntries,
+  getTranslationLanguages,
+  getQuestionTranslation,
   sendChatMessage,
   getChatHistory,
   getChatQuota,

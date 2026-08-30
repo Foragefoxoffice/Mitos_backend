@@ -36,6 +36,17 @@ router.get(
   ctrl.getTestSeriesTermsForQuestion
 );
 
+// Regional Language Translation — mirrors the dictionary section above.
+// Student-facing read is authenticateUser only, NOT requirePremium: this
+// is core accessibility (reading the question in your own language), not
+// a premium-tier perk like AI Chat — closer in spirit to the open
+// dictionary term list than to chat. Revisit if that product call changes.
+router.post("/translation/generate-batch", verifyAdmin, ctrl.runTranslationBatch);
+router.get("/translation/progress", verifyAdmin, ctrl.getTranslationProgress);
+router.get("/translation/entries", verifyAdmin, ctrl.getTranslationEntries);
+router.get("/translation/languages", authenticateUser, ctrl.getTranslationLanguages);
+router.get("/translation/for-question/:questionId", authenticateUser, ctrl.getQuestionTranslation);
+
 // Student-facing: per-question AI chat. Writes user-attributed data and
 // has a daily cap to enforce (see CHAT_DAILY_MESSAGE_CAP in ai-service).
 router.post("/chat/message", authenticateUser, requirePremium, ctrl.sendChatMessage);
