@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 
 const { generateToken, generateRefreshToken } = require("../utils/jwt");
-const { issueSessionTokens } = require("../utils/session");
+const { issueSessionTokens, hasSessionConflict } = require("../utils/session");
 const sendEmail = require("../utils/sendEmail");
 const welcomeEmail = require("../templates/welcomeEmail");
 const emailOtpTemplate = require("../templates/emailOtp");
@@ -340,6 +340,21 @@ const verifyWhatsappOtp = async (req, res) => {
     if (user.whatsappOtp !== cleanOtp)
       return res.status(400).json({ message: "Invalid OTP. Please check and try again." });
 
+    // Single-device login: check for a conflict BEFORE clearing the OTP or
+    // touching registration fields below — a 409 here must leave the OTP
+    // valid, since the client's "log out that device" retry resends this
+    // SAME OTP with force: true (see hasSessionConflict's comment for the
+    // bug this fixes).
+    const { deviceId, deviceLabel, force } = req.body;
+    if (hasSessionConflict(user, { deviceId, force })) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: user.activeSessionLabel,
+        since: user.activeSessionAt,
+      });
+    }
+
     const needsReg = !user.name || !user.email || !user.className;
 
     if (needsReg && (!name || !email || !className)) {
@@ -365,7 +380,10 @@ const verifyWhatsappOtp = async (req, res) => {
 
     const finalUser = await prisma.user.findUnique({ where: { phoneNumber } });
 
-    const { deviceId, deviceLabel, force } = req.body;
+    // deviceId/deviceLabel/force already destructured above (used for the
+    // early conflict check) — reused here unchanged. This call can no
+    // longer actually hit session.conflict (we already ruled that out
+    // before touching the OTP), it just establishes the session for real.
     const session = await issueSessionTokens(finalUser, { deviceId, deviceLabel, force });
     if (session.conflict) {
       return res.status(409).json({
@@ -462,6 +480,21 @@ const verifyEmailOtp = async (req, res) => {
     if (user.emailOtp !== cleanOtp)
       return res.status(400).json({ message: "Invalid OTP. Please check and try again." });
 
+    // Single-device login: check for a conflict BEFORE clearing the OTP or
+    // touching registration fields below — a 409 here must leave the OTP
+    // valid, since the client's "log out that device" retry resends this
+    // SAME OTP with force: true (see hasSessionConflict's comment for the
+    // bug this fixes).
+    const { deviceId, deviceLabel, force } = req.body;
+    if (hasSessionConflict(user, { deviceId, force })) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: user.activeSessionLabel,
+        since: user.activeSessionAt,
+      });
+    }
+
     const needsReg = !user.name || !user.className;
 
     if (needsReg && (!name || !className)) {
@@ -500,7 +533,10 @@ const verifyEmailOtp = async (req, res) => {
 
     const finalUser = await prisma.user.findUnique({ where: { email } });
 
-    const { deviceId, deviceLabel, force } = req.body;
+    // deviceId/deviceLabel/force already destructured above (used for the
+    // early conflict check) — reused here unchanged. This call can no
+    // longer actually hit session.conflict (we already ruled that out
+    // before touching the OTP), it just establishes the session for real.
     const session = await issueSessionTokens(finalUser, { deviceId, deviceLabel, force });
     if (session.conflict) {
       return res.status(409).json({
