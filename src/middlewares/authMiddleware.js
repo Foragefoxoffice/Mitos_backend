@@ -1,23 +1,49 @@
 const jwt = require("jsonwebtoken");
 const { verifyToken } = require("../utils/jwt");
+const prisma = require("../utils/prisma");
 
-const authenticateUser = (req, res, next) => {
+const authenticateUser = async (req, res, next) => {
   try {
     const token = req.header("Authorization")?.split(" ")[1];
-    
+
     // If no token, assign guest role and continue
     if (!token) {
       req.user = { role: "guest" };
       return next();
     }
 
-    const user = verifyToken(token);
-  
-    if (!user || (!user.id && !user.userId)) {
+    const decoded = verifyToken(token);
+
+    if (!decoded || (!decoded.id && !decoded.userId)) {
       return res.status(401).json({ message: "Invalid or expired token" });
     }
 
-    req.user = { id: user.id || user.userId, role: user.role || "user" }; // Default to "user" role if not specified
+    const userId = decoded.id || decoded.userId;
+
+    // Single-device login: every token minted since the 2026-09-02 session
+    // feature carries the sessionId active at issuance time. Compare it to
+    // the CURRENT value on the user row — a mismatch means a newer login
+    // elsewhere replaced this session. A null user.activeSessionId means
+    // this user hasn't logged in again since the migration — deliberately
+    // not enforced yet for them, so no mass logout on deploy day (see
+    // spec's Edge Cases).
+    const current = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { activeSessionId: true },
+    });
+
+    if (!current) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    if (current.activeSessionId && decoded.sessionId !== current.activeSessionId) {
+      return res.status(401).json({
+        code: "SESSION_REVOKED",
+        message: "You've been logged out because this account was used on another device.",
+      });
+    }
+
+    req.user = { id: userId, role: decoded.role || "user" }; // Default to "user" role if not specified
     next();
   } catch (error) {
     res.status(401).json({ message: "Authentication failed" });

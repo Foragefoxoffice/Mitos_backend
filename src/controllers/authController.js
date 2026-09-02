@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 
 const { generateToken, generateRefreshToken } = require("../utils/jwt");
+const { issueSessionTokens } = require("../utils/session");
 const sendEmail = require("../utils/sendEmail");
 const welcomeEmail = require("../templates/welcomeEmail");
 const emailOtpTemplate = require("../templates/emailOtp");
@@ -77,8 +78,10 @@ const register = async (req, res) => {
       data: { email, password: hashedPassword, name, role },
     });
 
-    const accessToken = generateToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const { deviceId, deviceLabel } = req.body;
+    // A brand-new account can never have a real conflicting session —
+    // always force (see spec §4 and Task 3's issueSessionTokens).
+    const session = await issueSessionTokens(user, { deviceId, deviceLabel, force: true });
 
     // fire & forget welcome email
     (async () => {
@@ -92,10 +95,10 @@ const register = async (req, res) => {
     })();
 
     res.status(201).json({
-      user,
-      accessToken,
-      refreshToken,
-      role: user.role,
+      user: session.user,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      role: session.user.role,
       message: "Registration successful",
     });
   } catch (error) {
@@ -109,7 +112,7 @@ const register = async (req, res) => {
    LOGIN (email/password)
 ====================================================== */
 const login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, deviceId, deviceLabel, force } = req.body;
 
   try {
     if (!email || !password) {
@@ -124,10 +127,17 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const accessToken = generateToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const session = await issueSessionTokens(user, { deviceId, deviceLabel, force });
+    if (session.conflict) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: session.label,
+        since: session.since,
+      });
+    }
 
-    res.json({ user, accessToken, refreshToken, role: user.role });
+    res.json({ user: session.user, accessToken: session.accessToken, refreshToken: session.refreshToken, role: session.user.role });
   } catch (error) {
     console.error("Login error:", error);
     if (error.code === 'P1008') return res.status(503).json({ message: "Server is temporarily busy. Please try again." });
@@ -168,10 +178,18 @@ const googleAuth = async (req, res) => {
       });
     }
 
-    const accessToken = generateToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const { deviceId, deviceLabel, force } = req.body;
+    const session = await issueSessionTokens(user, { deviceId, deviceLabel, force });
+    if (session.conflict) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: session.label,
+        since: session.since,
+      });
+    }
 
-    res.json({ user, accessToken, refreshToken, role: user.role });
+    res.json({ user: session.user, accessToken: session.accessToken, refreshToken: session.refreshToken, role: session.user.role });
   } catch (error) {
     console.error("Google auth error:", error);
     if (error.code === 'P1008') return res.status(503).json({ message: "Server is temporarily busy. Please try again." });
@@ -193,9 +211,23 @@ const refreshTokenHandler = async (req, res) => {
 
     if (!user) return res.status(403).json({ message: "Invalid token" });
 
+    // Single-device login: a mismatch means a newer login elsewhere
+    // replaced this session (see authMiddleware.js's authenticateUser for
+    // the identical check on regular requests, and the migration-day
+    // note there about why a null user.activeSessionId doesn't enforce).
+    if (user.activeSessionId && decoded.sessionId !== user.activeSessionId) {
+      return res.status(401).json({
+        code: "SESSION_REVOKED",
+        message: "You've been logged out because this account was used on another device.",
+      });
+    }
+
+    // Refreshing continues the SAME session — it doesn't establish a new
+    // one, so the sessionId embedded in the new tokens is the one this
+    // request came in with, not a freshly minted one.
     res.json({
-      accessToken: generateToken(user),
-      refreshToken: generateRefreshToken(user),
+      accessToken: generateToken(user, decoded.sessionId),
+      refreshToken: generateRefreshToken(user, decoded.sessionId),
     });
   } catch (error) {
     console.error("Refresh token error:", error);
@@ -283,11 +315,16 @@ const verifyWhatsappOtp = async (req, res) => {
         });
       }
 
+      const { deviceId, deviceLabel } = req.body;
+      // Reviewer accounts must never get blocked by a stale session from a
+      // previous review round — always force (see Task 7's Interfaces).
+      const session = await issueSessionTokens(user, { deviceId, deviceLabel, force: true });
+
       return res.json({
-        user,
-        accessToken: generateToken(user),
-        refreshToken: generateRefreshToken(user),
-        role: user.role,
+        user: session.user,
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        role: session.user.role,
         testMode: true,
       });
     }
@@ -328,11 +365,22 @@ const verifyWhatsappOtp = async (req, res) => {
 
     const finalUser = await prisma.user.findUnique({ where: { phoneNumber } });
 
+    const { deviceId, deviceLabel, force } = req.body;
+    const session = await issueSessionTokens(finalUser, { deviceId, deviceLabel, force });
+    if (session.conflict) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: session.label,
+        since: session.since,
+      });
+    }
+
     res.json({
-      user: finalUser,
-      accessToken: generateToken(finalUser),
-      refreshToken: generateRefreshToken(finalUser),
-      role: finalUser.role,
+      user: session.user,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      role: session.user.role,
     });
   } catch (error) {
     if (error.code === "P2002") {
@@ -452,11 +500,22 @@ const verifyEmailOtp = async (req, res) => {
 
     const finalUser = await prisma.user.findUnique({ where: { email } });
 
+    const { deviceId, deviceLabel, force } = req.body;
+    const session = await issueSessionTokens(finalUser, { deviceId, deviceLabel, force });
+    if (session.conflict) {
+      return res.status(409).json({
+        code: "ALREADY_LOGGED_IN",
+        message: "Your account is already logged in on another device.",
+        label: session.label,
+        since: session.since,
+      });
+    }
+
     res.json({
-      user: finalUser,
-      accessToken: generateToken(finalUser),
-      refreshToken: generateRefreshToken(finalUser),
-      role: finalUser.role,
+      user: session.user,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      role: session.user.role,
     });
   } catch (error) {
     if (error.code === "P2002") {

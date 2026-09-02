@@ -1,16 +1,16 @@
 const jwt = require("jsonwebtoken");
 
-const generateToken = (user) => {
+const generateToken = (user, sessionId) => {
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
+    { id: user.id, email: user.email, role: user.role, sessionId },
     process.env.JWT_SECRET,
     { expiresIn: "7d" } // Access token expires in 7 days
   );
 };
 
-const generateRefreshToken = (user) => {
+const generateRefreshToken = (user, sessionId) => {
   return jwt.sign(
-    { id: user.id },
+    { id: user.id, sessionId },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: "30d" } // Refresh token expires in 30 days
   );

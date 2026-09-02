@@ -207,6 +207,10 @@ model user {
   whatsappOtp        String?
   whatsappOtpExp     DateTime?
   fcmToken           String?
+  activeSessionId       String?             @db.VarChar(64)
+  activeSessionDeviceId String?             @db.VarChar(64)
+  activeSessionLabel    String?             @db.VarChar(100)
+  activeSessionAt       DateTime?
   hasUsedTrial       Boolean             @default(false)
   trialEndsAt        DateTime?
   trialStartedAt     DateTime?
