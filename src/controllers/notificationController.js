@@ -34,22 +34,6 @@ const compressNotifImage = async (filePath) => {
 
 const formatPercent = (value) => (value == null ? "" : `${Math.round(value)}%`);
 
-// Confirmed live 2026-08-28: one trial user (10 days into a still-active
-// trial) received 80 admin notifications in 14 days — the same ~6-message
-// daily batch, re-sent every day, to the entire active-trial population,
-// with zero tracking of who'd already gotten it. Root cause was that the
-// "skip anyone who already got this" check only ran for `recipientMode
-// === 'date'` sends — "By Status" sends (which this pattern's timing/
-// message repetition strongly points to) had no such check at all. Admin-
-// configurable via the same generic `appsetting` key/value store
-// getChatCreditCaps() in aiController.js uses for AI Chat's caps — same
-// reasoning: change it from App Settings without a code deploy.
-const DEFAULT_NOTIFICATION_DAILY_CAP = 5;
-const getNotificationDailyCap = async () => {
-  const row = await prisma.appsetting.findUnique({ where: { key: "notification_daily_cap_per_user" } });
-  return Number(row?.value) || DEFAULT_NOTIFICATION_DAILY_CAP;
-};
-
 // Trial/Premium "active" vs "expired" is always derived from these two
 // date columns (trialStartedAt/trialEndsAt/premiumExpiry) compared against
 // the current moment — never from a separate cached status flag, which
@@ -285,38 +269,21 @@ exports.sendNotification = async (req, res) => {
     }
 
     /* --------------------------------------------------
-       RESPECT PER-USER DAILY CAP — a blunt safety net independent of the
-       dedup check above, so a genuinely NEW/varied message still can't
-       pile onto a user who's already gotten several notifications today
-       (e.g. multiple distinct campaigns sent back-to-back in one admin
-       session). Admin-editable via App Settings (see
-       getNotificationDailyCap above); default 5/day.
-    -------------------------------------------------- */
-    const dailyCap = await getNotificationDailyCap();
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentCounts = await prisma.notification.groupBy({
-      by: ['userId'],
-      where: { userId: { in: users.map(u => u.id) }, createdAt: { gte: since24h } },
-      _count: { id: true },
-    });
-    const overCapIds = new Set(recentCounts.filter(r => r._count.id >= dailyCap).map(r => r.userId));
-    const beforeCapCount = users.length;
-    users = users.filter(u => !overCapIds.has(u.id));
-    const skippedDailyCap = beforeCapCount - users.length;
-
-    if (users.length === 0) {
-      return res.status(200).json({
-        message: `All remaining matching users have already hit today's ${dailyCap}-notification cap — nothing sent.`,
-        totalUsers: 0,
-        skippedAlreadyNotified,
-        skippedDailyCap,
-      });
-    }
-
-    /* --------------------------------------------------
        CREATE & SEND NOTIFICATIONS
     -------------------------------------------------- */
     const notificationsToCreate = [];
+    // Real per-send delivery outcome, not just "a DB row was created for
+    // this recipient" — confirmed live 2026-09-02 that a chunk of users
+    // matched by a status/date filter (e.g. "Premium Users") have no
+    // fcmToken saved at all (39% of PREMIUM-status users at the time),
+    // so admin previously saw "sent to N users" with zero visibility into
+    // how many of those N actually got a real push vs. just an in-app
+    // notification row nobody's device was pinged for. FCM sends are now
+    // awaited (were fire-and-forget) so these counts are accurate at
+    // response time, not just logged to the server console after the
+    // response already went out.
+    let noTokenCount = 0;
+    const sendPromises = [];
 
     for (const user of users) {
       const personalizedMessage = renderTemplate(message, user);
@@ -333,8 +300,12 @@ exports.sendNotification = async (req, res) => {
         createdAt: new Date(),
       });
 
-      // Send FCM push (non-blocking)
-      if (user.fcmToken) {
+      if (!user.fcmToken) {
+        noTokenCount++;
+        continue;
+      }
+
+      {
         const fcmMsg = {
           token: user.fcmToken,
           // TEMPORARILY back to a real `notification` key for Android —
@@ -378,9 +349,11 @@ exports.sendNotification = async (req, res) => {
             ...(imageUrl && { fcmOptions: { imageUrl } }),
           },
         };
-        admin.messaging().send(fcmMsg).catch(err => {
-          console.error(`FCM error for user ${user.id}`, err.message);
-        });
+        sendPromises.push(
+          admin.messaging().send(fcmMsg)
+            .then(() => ({ userId: user.id, ok: true }))
+            .catch(err => ({ userId: user.id, ok: false, code: err.errorInfo?.code || err.code || null, message: err.message }))
+        );
       }
     }
 
@@ -388,13 +361,46 @@ exports.sendNotification = async (req, res) => {
       data: notificationsToCreate,
     });
 
+    const sendResults = await Promise.all(sendPromises);
+    let delivered = 0;
+    let invalidToken = 0;
+    let failedOther = 0;
+    const staleTokenUserIds = [];
+    for (const r of sendResults) {
+      if (r.ok) {
+        delivered++;
+        continue;
+      }
+      // A stale/uninstalled-app token — normal device churn, not a
+      // transient failure. Null it out so future sends stop wasting a
+      // request on it and this same user doesn't keep showing up as
+      // "matched but undeliverable" send after send.
+      if (r.code === 'messaging/registration-token-not-registered' || r.code === 'messaging/invalid-registration-token' || r.code === 'messaging/invalid-argument') {
+        invalidToken++;
+        staleTokenUserIds.push(r.userId);
+      } else {
+        failedOther++;
+        console.error(`FCM error for user ${r.userId}:`, r.code || r.message);
+      }
+    }
+
+    if (staleTokenUserIds.length > 0) {
+      await prisma.user.updateMany({
+        where: { id: { in: staleTokenUserIds } },
+        data: { fcmToken: null },
+      });
+    }
+
     return res.json({
       message: sendToAll
         ? "Notification sent to all users"
         : "Notification sent to selected users",
       totalUsers: users.length,
       skippedAlreadyNotified,
-      skippedDailyCap,
+      delivered,
+      noToken: noTokenCount,
+      invalidToken,
+      failedOther,
     });
   } catch (error) {
     console.error("Error sending notification:", error);
