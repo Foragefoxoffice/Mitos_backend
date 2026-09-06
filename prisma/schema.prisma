@@ -470,7 +470,9 @@ enum UserClass {
 enum BannerPlatform {
   WEB_DESKTOP
   WEB_MOBILE
-  MOBILE_APP
+  MOBILE_APP // legacy "both Android and iOS" — kept for existing banners; new ones pick one of the two below
+  MOBILE_APP_ANDROID
+  MOBILE_APP_IOS
 }
 
 enum BannerSection {

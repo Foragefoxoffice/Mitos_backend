@@ -7,14 +7,6 @@ const razorpay = require("../utils/razorpay");
 const { getGooglePlayAccessToken } = require("../utils/googlePlayAuth");
 const { pickReceiptEntry } = require("../utils/appleReceipt");
 
-// Constants formerly missing or needed for legacy routes
-const PRICE_MAP = {
-  NEET_2026: 1399,
-  NEET_2027: 3599,
-  NEET_2028: 6299,
-  NEET_MONTH: 299,
-};
-
 /**
  * Helper to calculate expiry date based on plan code
  * @param {string} planCode 
@@ -276,20 +268,28 @@ exports.createRazorpayOrder = async (req, res) => {
   try {
     const { plan, coupon, priceId } = req.body;
 
-    let originalAmount;
-
-    if (priceId) {
-      const planPrice = await prisma.neetplanprice.findFirst({
-        where: { id: Number(priceId), isActive: true },
-        select: { finalPrice: true, price: true, neetplan: { select: { code: true, isActive: true } } },
-      });
-      if (!planPrice || !planPrice.neetplan?.isActive) {
-        return res.status(400).json({ message: "Invalid plan" });
-      }
-      originalAmount = planPrice.finalPrice || planPrice.price;
-    } else {
-      originalAmount = PRICE_MAP[plan];
+    // priceId is required — no more silent fallback to the hardcoded
+    // PRICE_MAP (removed 2026-09-06). That map went stale against the
+    // real, admin-managed neetplanprice table and let the public website
+    // charge customers an outdated price with zero admin visibility —
+    // real customer impact, not just a display bug. Every real client
+    // (mobile app, and now the website) fetches current prices from
+    // GET /subscription/plans and must pass the priceId it got from
+    // there, so the amount charged always traces back to something an
+    // admin can see and control.
+    if (!priceId) {
+      return res.status(400).json({ message: "priceId is required" });
     }
+
+    const planPrice = await prisma.neetplanprice.findFirst({
+      where: { id: Number(priceId), isActive: true },
+      select: { finalPrice: true, price: true, neetplan: { select: { id: true, code: true, isActive: true } } },
+    });
+    if (!planPrice || !planPrice.neetplan?.isActive) {
+      return res.status(400).json({ message: "Invalid plan" });
+    }
+    const originalAmount = planPrice.finalPrice || planPrice.price;
+    const neetPlanId = planPrice.neetplan.id;
 
     if (!originalAmount) {
       return res.status(400).json({ message: "Invalid plan" });
@@ -326,6 +326,12 @@ exports.createRazorpayOrder = async (req, res) => {
         originalAmount,
         discountAmount,
         couponId: couponId || "",
+        // Read back in verifyRazorpayPayment — Razorpay's own stored
+        // notes are the authoritative record of what this order was
+        // actually for, so verify doesn't have to trust anything the
+        // client resends at that point.
+        priceId: Number(priceId),
+        neetPlanId,
       },
     });
 
@@ -350,17 +356,22 @@ exports.createCombinedOrder = async (req, res) => {
   try {
     const { plan, priceId, testPackageIds = [], includeBundle = false, coupon } = req.body;
 
-    // ── Premium price ──
-    let premiumAmount;
-    if (priceId) {
-      const planPrice = await prisma.neetplanprice.findFirst({
-        where: { id: Number(priceId), isActive: true },
-        select: { finalPrice: true, price: true },
-      });
-      premiumAmount = planPrice?.finalPrice || planPrice?.price;
-    } else {
-      premiumAmount = PRICE_MAP[plan];
+    // priceId required — see createRazorpayOrder's comment for why the
+    // PRICE_MAP fallback was removed entirely (2026-09-06).
+    if (!priceId) {
+      return res.status(400).json({ message: "priceId is required" });
     }
+
+    // ── Premium price ──
+    const planPrice = await prisma.neetplanprice.findFirst({
+      where: { id: Number(priceId), isActive: true },
+      select: { finalPrice: true, price: true, neetplan: { select: { id: true, isActive: true } } },
+    });
+    if (!planPrice || !planPrice.neetplan?.isActive) {
+      return res.status(400).json({ message: "Invalid plan" });
+    }
+    const premiumAmount = planPrice.finalPrice || planPrice.price;
+    const neetPlanId = planPrice.neetplan.id;
     if (!premiumAmount) return res.status(400).json({ message: "Invalid plan" });
 
     // ── Test series prices (individual packages OR bundle) ──
@@ -388,9 +399,11 @@ exports.createCombinedOrder = async (req, res) => {
 
     // ── Coupon applies to premium only ──
     let discountAmount = 0;
+    let couponId = null;
     if (coupon) {
       const dbCoupon = await prisma.coupon.findUnique({ where: { code: coupon.toUpperCase() } });
       if (dbCoupon?.isActive) {
+        couponId = dbCoupon.id;
         discountAmount = dbCoupon.type === "percentage"
           ? Math.round((premiumAmount * dbCoupon.value) / 100)
           : dbCoupon.value;
@@ -404,7 +417,16 @@ exports.createCombinedOrder = async (req, res) => {
       amount: totalAmount * 100,
       currency: "INR",
       receipt: `combo_${plan}_${req.user.id}_${Date.now()}`,
-      notes: { plan, premiumAmount, testSeriesTotal, includeBundle: String(includeBundle) },
+      notes: {
+        plan,
+        premiumAmount,
+        testSeriesTotal,
+        includeBundle: String(includeBundle),
+        discountAmount,
+        couponId: couponId || "",
+        priceId: Number(priceId),
+        neetPlanId,
+      },
     });
 
     res.json({
@@ -447,6 +469,15 @@ exports.verifyCombinedPayment = async (req, res) => {
     const razorOrder = await razorpay.orders.fetch(orderId);
     const paidAmount = razorOrder.amount / 100;
 
+    // See verifyRazorpayPayment's identical comment — read the real
+    // plan/coupon linkage back out of the order's own stored notes.
+    const notes = razorOrder.notes || {};
+    const neetPlanId = notes.neetPlanId ? Number(notes.neetPlanId) : null;
+    const neetPlanPriceId = notes.priceId ? Number(notes.priceId) : null;
+    const couponId = notes.couponId ? Number(notes.couponId) : null;
+    const discountAmount = notes.discountAmount ? Number(notes.discountAmount) : 0;
+    const originalAmount = notes.premiumAmount ? Number(notes.premiumAmount) : null;
+
     await prisma.user.update({
       where: { id: userId },
       data: { status: "PREMIUM", premiumExpiry },
@@ -464,6 +495,12 @@ exports.verifyCombinedPayment = async (req, res) => {
           subscriptionType: plan,
           paymentGateway: "Razorpay",
           gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
+          couponId,
+          discountAmount,
+          originalAmount,
+          neetPlanId,
+          neetPlanPriceId,
+          platform: "WEB",
           updatedAt: new Date(),
         },
       });
@@ -558,6 +595,22 @@ exports.verifyRazorpayPayment = async (req, res) => {
 
     console.log("✅ [VERIFY_RAZORPAY] Razorpay order fetched");
 
+    // Pull the real plan/coupon linkage back out of the order's own notes
+    // (set at creation time in createRazorpayOrder), not from anything
+    // resent in this request — Razorpay's stored notes are the
+    // authoritative record of what this specific order was actually for.
+    // Previously these columns were left null/0 on every payment created
+    // this way, even though the real values were sitting right there in
+    // the notes — meant admins had no way to cross-check a payment
+    // against the plan/coupon it actually used without hand-parsing the
+    // raw gateway response.
+    const notes = order.notes || {};
+    const neetPlanId = notes.neetPlanId ? Number(notes.neetPlanId) : null;
+    const neetPlanPriceId = notes.priceId ? Number(notes.priceId) : null;
+    const couponId = notes.couponId ? Number(notes.couponId) : null;
+    const discountAmount = notes.discountAmount ? Number(notes.discountAmount) : 0;
+    const originalAmount = notes.originalAmount ? Number(notes.originalAmount) : null;
+
     await prisma.user.update({
       where: { id: userId },
       data: { status: "PREMIUM", premiumExpiry },
@@ -575,6 +628,12 @@ exports.verifyRazorpayPayment = async (req, res) => {
           subscriptionType: plan,
           paymentGateway: "Razorpay",
           gatewayResponse: JSON.stringify({ order, paymentId, signature }),
+          couponId,
+          discountAmount,
+          originalAmount,
+          neetPlanId,
+          neetPlanPriceId,
+          platform: "WEB",
           updatedAt: new Date(),
         },
       });

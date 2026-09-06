@@ -57,19 +57,18 @@ exports.validateCoupon = async (req, res) => {
       return res.status(400).json({ message: "Missing coupon or plan" });
     }
 
-    // 1️⃣ Get plan price — use actual price from frontend if provided
-    const PRICE_MAP = {
-      NEET_2026: 1399,
-      NEET_2027: 3599,
-      NEET_2028: 6299,
-    };
-
-    const originalAmount = (planPrice && Number(planPrice) > 0)
-      ? Number(planPrice)
-      : PRICE_MAP[plan];
+    // 1️⃣ Get plan price — the caller must send the real current price
+    // (fetched from GET /subscription/plans, same as what
+    // createRazorpayOrder will actually charge). No more hardcoded
+    // PRICE_MAP fallback — that map (a second, independent copy of the
+    // same stale-price bug fixed in subscriptionController.js's
+    // createRazorpayOrder on 2026-09-06) meant a discount preview could
+    // silently be computed off a price years out of date with what
+    // admins had since configured.
+    const originalAmount = Number(planPrice) > 0 ? Number(planPrice) : null;
 
     if (!originalAmount) {
-      return res.status(400).json({ message: "Invalid plan" });
+      return res.status(400).json({ message: "planPrice is required" });
     }
 
     // 2️⃣ Find coupon
