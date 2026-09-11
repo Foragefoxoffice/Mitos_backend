@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const sharp = require("sharp");
 const admin = require("../../firebase");
+const { buildAlreadyNotifiedWhere } = require("../utils/notificationDedupe");
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
@@ -33,6 +34,23 @@ const compressNotifImage = async (filePath) => {
 };
 
 const formatPercent = (value) => (value == null ? "" : `${Math.round(value)}%`);
+
+// Admin-configurable via the same generic `appsetting` key/value store
+// getChatCreditCaps() in aiController.js uses — change the resend window
+// from App Settings without a code deploy. Positive default (not forever)
+// so a legitimately recurring campaign (same template text sent again
+// weeks later) isn't permanently blocked just because the wording didn't
+// change — confirmed live 2026-09-11: an admin resending an unchanged
+// message to a ~16k-user segment got everyone skipped as "already
+// notified" with no way to override. Only same-window repeats (the
+// pattern from the original 2026-08-28 incident, see below) are guarded
+// against by default.
+const DEFAULT_NOTIFICATION_RESEND_WINDOW_DAYS = 7;
+const getNotificationResendWindowDays = async () => {
+  const row = await prisma.appsetting.findUnique({ where: { key: "notification_resend_window_days" } });
+  const parsed = Number(row?.value);
+  return Number.isFinite(parsed) ? parsed : DEFAULT_NOTIFICATION_RESEND_WINDOW_DAYS;
+};
 
 // Trial/Premium "active" vs "expired" is always derived from these two
 // date columns (trialStartedAt/trialEndsAt/premiumExpiry) compared against
@@ -114,6 +132,10 @@ exports.uploadNotifImageOnly = async (req, res) => {
 exports.sendNotification = async (req, res) => {
   try {
     const { title, message, sendToAll, subscriptionStatus, deepLinkScreen } = req.body;
+    // Explicit admin override for the already-notified dedupe below —
+    // bypasses even the resend window, for the rare case someone genuinely
+    // wants an unchanged message to go out again right away.
+    const forceResend = req.body.forceResend === true || req.body.forceResend === 'true';
     // multer gives a string when only one id is sent via FormData; normalize to array
     let userIds = req.body.userIds;
     if (typeof userIds === 'string') userIds = [userIds];
@@ -237,35 +259,51 @@ exports.sendNotification = async (req, res) => {
     }
 
     /* --------------------------------------------------
-       SKIP ALREADY-NOTIFIED USERS — applies to EVERY send type, not just
-       "By Date". Originally gated behind recipientMode === 'date' only;
-       that gap is exactly what let a "By Status: Trial Users" send
-       re-blast the entire active-trial population daily with zero memory
-       of who'd already gotten it (confirmed live 2026-08-28: one student
-       received the same ~6-message batch every day for 14 days, 80
-       notifications total, most while still weeks from their trial
-       actually ending). `message` stores the raw un-personalized
-       template — same value across all recipients of a given campaign and
-       across repeat sends of it — so matching on (userId, message)
-       reliably identifies "already got this campaign" regardless of the
-       per-user {{name}} in the title.
+       SKIP ALREADY-NOTIFIED USERS (within the resend window) — applies to
+       EVERY send type, not just "By Date". Originally gated behind
+       recipientMode === 'date' only; that gap is exactly what let a "By
+       Status: Trial Users" send re-blast the entire active-trial
+       population daily with zero memory of who'd already gotten it
+       (confirmed live 2026-08-28: one student received the same
+       ~6-message batch every day for 14 days, 80 notifications total,
+       most while still weeks from their trial actually ending). `message`
+       stores the raw un-personalized template — same value across all
+       recipients of a given campaign and across repeat sends of it — so
+       matching on (userId, message) reliably identifies "already got this
+       campaign" regardless of the per-user {{name}} in the title.
+
+       That fix originally had no time limit at all, which just traded one
+       bug for another: any message text, once sent, could never be sent
+       to the same user again — confirmed live 2026-09-11, a resend to a
+       ~16k-user segment got 100% skipped. Default window is now 7 days
+       (getNotificationResendWindowDays, admin-editable) so an unchanged
+       recurring campaign can go out again once it's actually been a
+       while, and `forceResend` lets admin bypass the check entirely for
+       an intentional immediate repeat.
     -------------------------------------------------- */
     const beforeDedupeCount = users.length;
-    const alreadyNotified = await prisma.notification.findMany({
-      where: { userId: { in: users.map(u => u.id) }, message },
-      select: { userId: true },
-      distinct: ['userId'],
-    });
-    const alreadyNotifiedIds = new Set(alreadyNotified.map(n => n.userId));
-    users = users.filter(u => !alreadyNotifiedIds.has(u.id));
-    const skippedAlreadyNotified = beforeDedupeCount - users.length;
-
-    if (users.length === 0) {
-      return res.status(200).json({
-        message: "All matching users already received this notification — nothing new to send.",
-        totalUsers: 0,
-        skippedAlreadyNotified,
+    let skippedAlreadyNotified = 0;
+    let resendWindowDays = null;
+    if (!forceResend) {
+      resendWindowDays = await getNotificationResendWindowDays();
+      const alreadyNotified = await prisma.notification.findMany({
+        where: buildAlreadyNotifiedWhere({ userIds: users.map(u => u.id), message, windowDays: resendWindowDays }),
+        select: { userId: true },
+        distinct: ['userId'],
       });
+      const alreadyNotifiedIds = new Set(alreadyNotified.map(n => n.userId));
+      users = users.filter(u => !alreadyNotifiedIds.has(u.id));
+      skippedAlreadyNotified = beforeDedupeCount - users.length;
+
+      if (users.length === 0) {
+        return res.status(200).json({
+          message: resendWindowDays > 0
+            ? `All matching users already received this exact notification within the last ${resendWindowDays} day${resendWindowDays !== 1 ? 's' : ''} — nothing new to send. Use "Resend anyway" to send it again now.`
+            : "All matching users already received this notification — nothing new to send.",
+          totalUsers: 0,
+          skippedAlreadyNotified,
+        });
+      }
     }
 
     /* --------------------------------------------------
