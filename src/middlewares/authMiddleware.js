@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const { verifyToken } = require("../utils/jwt");
 const prisma = require("../utils/prisma");
+const { isSessionEnforced } = require("../utils/session");
 
 const authenticateUser = async (req, res, next) => {
   try {
@@ -26,7 +27,14 @@ const authenticateUser = async (req, res, next) => {
     // elsewhere replaced this session. A null user.activeSessionId means
     // this user hasn't logged in again since the migration — deliberately
     // not enforced yet for them, so no mass logout on deploy day (see
-    // spec's Edge Cases).
+    // spec's Edge Cases). Admin accounts are exempt entirely (see
+    // isSessionEnforced in utils/session.js) — skip the DB round-trip for
+    // them rather than fetch-then-ignore.
+    if (!isSessionEnforced(decoded.role)) {
+      req.user = { id: userId, role: decoded.role || "user" };
+      return next();
+    }
+
     const current = await prisma.user.findUnique({
       where: { id: userId },
       select: { activeSessionId: true },

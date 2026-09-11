@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 
 const { generateToken, generateRefreshToken } = require("../utils/jwt");
-const { issueSessionTokens, hasSessionConflict } = require("../utils/session");
+const { issueSessionTokens, hasSessionConflict, isSessionEnforced } = require("../utils/session");
 const sendEmail = require("../utils/sendEmail");
 const welcomeEmail = require("../templates/welcomeEmail");
 const emailOtpTemplate = require("../templates/emailOtp");
@@ -215,7 +215,8 @@ const refreshTokenHandler = async (req, res) => {
     // replaced this session (see authMiddleware.js's authenticateUser for
     // the identical check on regular requests, and the migration-day
     // note there about why a null user.activeSessionId doesn't enforce).
-    if (user.activeSessionId && decoded.sessionId !== user.activeSessionId) {
+    // Admin accounts are exempt (isSessionEnforced, utils/session.js).
+    if (isSessionEnforced(user.role) && user.activeSessionId && decoded.sessionId !== user.activeSessionId) {
       return res.status(401).json({
         code: "SESSION_REVOKED",
         message: "You've been logged out because this account was used on another device.",
