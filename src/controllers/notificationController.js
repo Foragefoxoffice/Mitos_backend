@@ -5,6 +5,13 @@ const fs = require("fs");
 const sharp = require("sharp");
 const admin = require("../../firebase");
 const { buildAlreadyNotifiedWhere } = require("../utils/notificationDedupe");
+const { sendInBatches } = require("../utils/batch");
+
+// See sendInBatches' comment (utils/batch.js) — bounds how many
+// admin.messaging().send() calls are ever in flight at once, so a large
+// recipient list can't spike the single 512MB-capped backend process past
+// its memory limit and get OOM-killed mid-request.
+const FCM_SEND_BATCH_SIZE = 250;
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
@@ -321,7 +328,7 @@ exports.sendNotification = async (req, res) => {
     // response time, not just logged to the server console after the
     // response already went out.
     let noTokenCount = 0;
-    const sendPromises = [];
+    const fcmJobs = []; // { userId, fcmMsg } for recipients with a token — dispatched in bounded batches below
 
     for (const user of users) {
       const personalizedMessage = renderTemplate(message, user);
@@ -387,11 +394,7 @@ exports.sendNotification = async (req, res) => {
             ...(imageUrl && { fcmOptions: { imageUrl } }),
           },
         };
-        sendPromises.push(
-          admin.messaging().send(fcmMsg)
-            .then(() => ({ userId: user.id, ok: true }))
-            .catch(err => ({ userId: user.id, ok: false, code: err.errorInfo?.code || err.code || null, message: err.message }))
-        );
+        fcmJobs.push({ userId: user.id, fcmMsg });
       }
     }
 
@@ -399,7 +402,11 @@ exports.sendNotification = async (req, res) => {
       data: notificationsToCreate,
     });
 
-    const sendResults = await Promise.all(sendPromises);
+    const sendResults = await sendInBatches(fcmJobs, FCM_SEND_BATCH_SIZE, ({ userId, fcmMsg }) =>
+      admin.messaging().send(fcmMsg)
+        .then(() => ({ userId, ok: true }))
+        .catch(err => ({ userId, ok: false, code: err.errorInfo?.code || err.code || null, message: err.message }))
+    );
     let delivered = 0;
     let invalidToken = 0;
     let failedOther = 0;
