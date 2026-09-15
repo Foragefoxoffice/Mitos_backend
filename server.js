@@ -183,6 +183,7 @@ const errorBookRoutes = require("./src/routes/errorBookRoutes");
 const testSeriesRoutes = require("./src/routes/testSeriesRoutes");
 const subscriptionFeatureRoutes = require("./src/routes/subscriptionFeatureRoutes");
 const aiRoutes = require("./src/routes/aiRoutes");
+const salesAgentRoutes = require("./src/routes/salesAgentRoutes");
 
 
 // ===============================================
@@ -216,6 +217,7 @@ app.use("/api/test-series", testSeriesRoutes);
 app.use("/api/subscription-features", subscriptionFeatureRoutes);
 app.use("/api/settings", require("./src/routes/settingRoutes"));
 app.use("/api/ai", aiRoutes);
+app.use("/api/sales-agent", salesAgentRoutes);
 
 
 // ===============================================

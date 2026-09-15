@@ -22,16 +22,16 @@ model portion {
 }
 
 model subject {
-  id                      Int                      @id @default(autoincrement())
-  name                    String
-  portionId               Int
-  createdAt               DateTime                 @default(now())
-  isPremium               Boolean                  @default(true)
-  chapters                chapter[]                @relation("subjectChapters")
-  pdf                     pdf[]
-  questions               question[]
-  portion                 portion                  @relation("PortionSubjects", fields: [portionId], references: [id], onDelete: Cascade, map: "subject_portionId_fkey")
-  testSeriesQuestions     testseriesquestionbank[]
+  id                  Int                      @id @default(autoincrement())
+  name                String
+  portionId           Int
+  createdAt           DateTime                 @default(now())
+  isPremium           Boolean                  @default(true)
+  chapters            chapter[]                @relation("subjectChapters")
+  pdf                 pdf[]
+  questions           question[]
+  portion             portion                  @relation("PortionSubjects", fields: [portionId], references: [id], onDelete: Cascade, map: "subject_portionId_fkey")
+  testSeriesQuestions testseriesquestionbank[]
 
   @@index([id], map: "Subject_id_fkey")
   @@index([portionId], map: "subject_portionId_fkey")
@@ -156,8 +156,8 @@ model testresult {
   user             user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "TestResult_userId_fkey")
 
   @@index([userId], map: "TestResult_userId_fkey")
-  @@index([createdAt])                 // getAllTestResults date filter
-  @@index([userId, createdAt])         // per-user history sorted by date
+  @@index([createdAt]) // getAllTestResults date filter
+  @@index([userId, createdAt]) // per-user history sorted by date
 }
 
 // Precomputed per-user analytics summary — recomputed (fire-and-forget,
@@ -190,46 +190,48 @@ model useranalyticssummary {
 }
 
 model user {
-  id                 Int                 @id @default(autoincrement())
-  email              String?             @unique(map: "User_email_key")
-  name               String?
-  password           String?
-  role               String              @default("user")
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime?
-  phoneNumber        String?             @unique(map: "User_phoneNumber_key")
-  age                Int?
-  gender             String?
-  profile            String?
-  premiumExpiry      DateTime?
-  status             UserStatus          @default(REGISTERED)
-  className          UserClass?
-  whatsappOtp        String?
-  whatsappOtpExp     DateTime?
-  fcmToken           String?
-  activeSessionId       String?             @db.VarChar(64)
-  activeSessionDeviceId String?             @db.VarChar(64)
-  activeSessionLabel    String?             @db.VarChar(100)
+  id                    Int                        @id @default(autoincrement())
+  email                 String?                    @unique(map: "User_email_key")
+  name                  String?
+  password              String?
+  role                  String                     @default("user")
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime?
+  phoneNumber           String?                    @unique(map: "User_phoneNumber_key")
+  age                   Int?
+  gender                String?
+  profile               String?
+  premiumExpiry         DateTime?
+  status                UserStatus                 @default(REGISTERED)
+  className             UserClass?
+  whatsappOtp           String?
+  whatsappOtpExp        DateTime?
+  fcmToken              String?
+  activeSessionId       String?                    @db.VarChar(64)
+  activeSessionDeviceId String?                    @db.VarChar(64)
+  activeSessionLabel    String?                    @db.VarChar(100)
   activeSessionAt       DateTime?
-  hasUsedTrial       Boolean             @default(false)
-  trialEndsAt        DateTime?
-  trialStartedAt     DateTime?
-  emailOtp           String?
-  emailOtpExp        DateTime?
-  deletedAt          DateTime?
-  payment            payment[]
-  testresult         testresult[]
-  useranalyticssummary useranalyticssummary?
-  userneetplan       userneetplan[]
-  userWrongQuestions userwrongquestion[]
-  tsOrders           testseriesorder[]
-  tsPurchases        testseriespurchase[]
-  tsBundlePurchases  testseriesbundlepurchase[]
-  tsResults          testseriesresult[]
+  hasUsedTrial          Boolean                    @default(false)
+  trialEndsAt           DateTime?
+  trialStartedAt        DateTime?
+  emailOtp              String?
+  emailOtpExp           DateTime?
+  deletedAt             DateTime?
+  payment               payment[]
+  testresult            testresult[]
+  useranalyticssummary  useranalyticssummary?
+  userneetplan          userneetplan[]
+  userWrongQuestions    userwrongquestion[]
+  whatsappConversations whatsappconversation[]
+  salesLeads            saleslead[]
+  tsOrders              testseriesorder[]
+  tsPurchases           testseriespurchase[]
+  tsBundlePurchases     testseriesbundlepurchase[]
+  tsResults             testseriesresult[]
 
-  @@index([status])               // filter PREMIUM / TRIALED users
-  @@index([role])                 // admin vs user queries
-  @@index([createdAt])            // admin dashboard growth metrics
+  @@index([status]) // filter PREMIUM / TRIALED users
+  @@index([role]) // admin vs user queries
+  @@index([createdAt]) // admin dashboard growth metrics
 }
 
 model userwrongquestion {
@@ -258,19 +260,19 @@ model news {
 }
 
 model bannerupload {
-  id          Int              @id @default(autoincrement())
+  id          Int             @id @default(autoincrement())
   title       String?
   imageUrl    String
   redirectUrl String?
-  isActive    Boolean          @default(true)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   endAt       DateTime?
   platform    BannerPlatform?
-  priority    Int              @default(0)
+  priority    Int             @default(0)
   startAt     DateTime?
-  targetUsers Json             @default("[\"ALL\"]")
-  section     BannerSection    @default(HOME)
+  targetUsers Json            @default("[\"ALL\"]")
+  section     BannerSection   @default(HOME)
 
   @@index([platform])
   @@index([isActive])
@@ -286,7 +288,7 @@ model userfavquestion {
   question   question @relation(fields: [questionId], references: [id])
 
   @@unique([userId, questionId])
-  @@index([userId])                    // fetch all favourites for a user
+  @@index([userId]) // fetch all favourites for a user
   @@index([questionId], map: "userfavquestion_questionId_fkey")
 }
 
@@ -330,26 +332,26 @@ model freematerial {
 }
 
 model notification {
-  id            Int       @id @default(autoincrement())
-  title         String
-  message       String    @db.LongText
-  finalMessage  String    @db.LongText
-  userId        Int
-  sentToAll     Boolean   @default(false)
-  imageUrl      String?
+  id             Int       @id @default(autoincrement())
+  title          String
+  message        String    @db.LongText
+  finalMessage   String    @db.LongText
+  userId         Int
+  sentToAll      Boolean   @default(false)
+  imageUrl       String?
   // React Navigation route name to open when this notification is tapped
   // (both the OS push and the in-app notification list) — one of the
   // curated options in admin's Send Notification screen, or null for "no
   // deep link, just open the app".
   deepLinkScreen String?
-  createdAt     DateTime  @default(now())
-  read          Boolean   @default(false)
-  readAt        DateTime?
+  createdAt      DateTime  @default(now())
+  read           Boolean   @default(false)
+  readAt         DateTime?
 
   @@index([userId])
-  @@index([userId, read])             // unread count query
-  @@index([userId, createdAt])        // notifications sorted by date
-  @@index([createdAt])                // retention cleanup job (cron/cleanupNotifications.js)
+  @@index([userId, read]) // unread count query
+  @@index([userId, createdAt]) // notifications sorted by date
+  @@index([createdAt]) // retention cleanup job (cron/cleanupNotifications.js)
 }
 
 model coupon {
@@ -433,8 +435,8 @@ model payment {
   @@index([neetPlanId], map: "Payment_neetPlanId_fkey")
   @@index([neetPlanPriceId], map: "Payment_neetPlanPriceId_fkey")
   @@index([userId], map: "Payment_userId_idx")
-  @@index([paymentStatus])             // filter PENDING / COMPLETED payments
-  @@index([createdAt])                 // revenue by date range
+  @@index([paymentStatus]) // filter PENDING / COMPLETED payments
+  @@index([createdAt]) // revenue by date range
 }
 
 model userneetplan {
@@ -451,6 +453,123 @@ model userneetplan {
   @@index([planId], map: "UserNeetPlan_planId_fkey")
   @@index([priceId], map: "UserNeetPlan_priceId_fkey")
   @@index([userId], map: "UserNeetPlan_userId_idx")
+}
+
+model whatsappconversation {
+  id                 Int               @id @default(autoincrement())
+  userId             Int?
+  phoneNumber        String            @unique @db.VarChar(20)
+  ownerTest          Boolean           @default(false)
+  preview            Boolean           @default(false)
+  status             String            @default("ACTIVE") @db.VarChar(20)
+  channel            String            @default("WHATSAPP") @db.VarChar(20)
+  lastMessageAt      DateTime?
+  lastInboundAt      DateTime?
+  lastOutboundAt     DateTime?
+  lastMessagePreview String?           @db.VarChar(255)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  user               user?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages           whatsappmessage[]
+  lead               saleslead?
+  audits             aireplyaudit[]
+
+  @@index([userId])
+  @@index([ownerTest])
+}
+
+model whatsappmessage {
+  id             Int                  @id @default(autoincrement())
+  conversationId Int
+  waMessageId    String?              @unique @db.VarChar(100)
+  direction      String               @db.VarChar(20)
+  senderRole     String               @db.VarChar(20)
+  messageType    String               @db.VarChar(30)
+  status         String               @default("accepted") @db.VarChar(30)
+  text           String?              @db.LongText
+  rawPayload     Json?
+  createdAt      DateTime             @default(now())
+  conversation   whatsappconversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  audits         aireplyaudit[]
+
+  @@index([conversationId, createdAt])
+  @@index([status])
+}
+
+model saleslead {
+  id             Int                   @id @default(autoincrement())
+  conversationId Int?                  @unique
+  userId         Int?
+  phoneNumber    String                @db.VarChar(20)
+  stage          String                @default("NEW") @db.VarChar(20)
+  leadScore      Int                   @default(0)
+  lastSummary    String?               @db.LongText
+  objectionTags  Json?
+  nextAction     String?               @db.VarChar(100)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  conversation   whatsappconversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  user           user?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  offers         salesoffer[]
+  handoffs       saleshandoff[]
+  audits         aireplyaudit[]
+
+  @@index([userId])
+  @@index([phoneNumber])
+  @@index([stage])
+}
+
+model salesoffer {
+  id          Int       @id @default(autoincrement())
+  leadId      Int
+  offerType   String?   @db.VarChar(40)
+  title       String?   @db.VarChar(120)
+  couponCode  String?   @db.VarChar(60)
+  planCode    String?   @db.VarChar(60)
+  checkoutUrl String?   @db.Text
+  metadata    Json?
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+  lead        saleslead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([planCode])
+}
+
+model saleshandoff {
+  id         Int       @id @default(autoincrement())
+  leadId     Int
+  reason     String    @db.VarChar(120)
+  status     String    @default("OPEN") @db.VarChar(20)
+  notes      String?   @db.LongText
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+  lead       saleslead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([status])
+}
+
+model aireplyaudit {
+  id              Int                   @id @default(autoincrement())
+  conversationId  Int?
+  leadId          Int?
+  sourceMessageId Int?
+  promptVersion   String?               @db.VarChar(40)
+  provider        String?               @db.VarChar(20)
+  model           String?               @db.VarChar(100)
+  systemPrompt    String?               @db.LongText
+  promptText      String?               @db.LongText
+  replyText       String?               @db.LongText
+  toolTrace       Json?
+  createdAt       DateTime              @default(now())
+  conversation    whatsappconversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  lead            saleslead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  sourceMessage   whatsappmessage?      @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([leadId])
+  @@index([sourceMessageId])
 }
 
 enum UserStatus {
@@ -480,7 +599,6 @@ enum BannerSection {
   TEST_SERIES
   UPSELL
 }
-
 
 enum neetplanprice_platform {
   WEB
@@ -526,56 +644,56 @@ enum payment_platform {
 // ─────────────────────────────────────────────
 
 model testseriespackage {
-  id              Int                  @id @default(autoincrement())
-  title           String
-  description     String?              @db.LongText
-  isActive        Boolean              @default(true)
+  id               Int                  @id @default(autoincrement())
+  title            String
+  description      String?              @db.LongText
+  isActive         Boolean              @default(true)
   // Marks the ONE package (e.g. "Daily Challenge Series") whose newest
   // published test should surface as the Home screen's "Today's Test"
   // card — explicit admin flag rather than matching on title text, so
   // renaming the package doesn't silently break the card.
-  isDailyChallenge Boolean             @default(false)
-  price           Int                  @default(0)
-  mrp             Int?
-  physicalPrice   Int?
-  physicalMrp     Int?
-  features        Json?
-  paymentSubtitle String?
-  bannerImage     String?
-  bannerImages    Json?
-  position        Int                  @default(0)
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  tests           testseriestest[]
-  orders          testseriesorder[]
-  purchases       testseriespurchase[]
+  isDailyChallenge Boolean              @default(false)
+  price            Int                  @default(0)
+  mrp              Int?
+  physicalPrice    Int?
+  physicalMrp      Int?
+  features         Json?
+  paymentSubtitle  String?
+  bannerImage      String?
+  bannerImages     Json?
+  position         Int                  @default(0)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  tests            testseriestest[]
+  orders           testseriesorder[]
+  purchases        testseriespurchase[]
 
   @@index([isActive])
   @@index([position])
 }
 
 model testseriestest {
-  id             Int                        @id @default(autoincrement())
+  id             Int                       @id @default(autoincrement())
   packageId      Int
   name           String
-  duration       Int                        @default(200)
-  totalQuestions Int                        @default(180)
-  isPublished    Boolean                    @default(false)
-  order          Int                        @default(0)
+  duration       Int                       @default(200)
+  totalQuestions Int                       @default(180)
+  isPublished    Boolean                   @default(false)
+  order          Int                       @default(0)
   videoUrl       String?
-  syllabus       String?                    @db.LongText
+  syllabus       String?                   @db.LongText
   notesUrl       String?
   notesFileName  String?
-  createdAt      DateTime                   @default(now())
-  updatedAt      DateTime                   @updatedAt
-  package        testseriespackage          @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  package        testseriespackage         @relation(fields: [packageId], references: [id], onDelete: Cascade)
   subjectConfigs testseriessubjectconfig[]
   questions      testseriesquestion[]
   results        testseriesresult[]
 
   @@index([packageId])
-  @@index([packageId, order])          // ORDER BY order ASC query
-  @@index([packageId, isPublished])    // filter published tests per package
+  @@index([packageId, order]) // ORDER BY order ASC query
+  @@index([packageId, isPublished]) // filter published tests per package
 }
 
 model testseriessubjectconfig {
@@ -647,7 +765,7 @@ model testseriesorder {
 
   @@index([userId])
   @@index([packageId])
-  @@index([status])                    // filter PENDING orders
+  @@index([status]) // filter PENDING orders
 }
 
 model testseriespurchase {
@@ -690,7 +808,7 @@ model testseriesbundle {
 }
 
 model testseriesresult {
-  id               Int              @id @default(autoincrement())
+  id               Int            @id @default(autoincrement())
   userId           Int
   testId           Int
   score            Int
@@ -703,10 +821,10 @@ model testseriesresult {
   userAnswers      Json
   resultsBySubject Json
   resultsByType    Json?
-  attemptedAt      DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  user             user             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  test             testseriestest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  attemptedAt      DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  user             user           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  test             testseriestest @relation(fields: [testId], references: [id], onDelete: Cascade)
 
   @@unique([userId, testId])
   @@index([userId])
@@ -733,26 +851,26 @@ model testseriesbundlepurchase {
 }
 
 model subscriptionfeaturecategory {
-  id        Int                    @id @default(autoincrement())
+  id        Int                   @id @default(autoincrement())
   name      String
-  sortOrder Int                    @default(0)
-  isActive  Boolean                @default(true)
-  createdAt DateTime               @default(now())
-  updatedAt DateTime               @updatedAt
+  sortOrder Int                   @default(0)
+  isActive  Boolean               @default(true)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
   features  subscriptionfeature[]
 }
 
 model subscriptionfeature {
-  id         Int                           @id @default(autoincrement())
+  id         Int                         @id @default(autoincrement())
   categoryId Int
   name       String
-  freeValue  String                        @default("false")
-  premValue  String                        @default("true")
-  sortOrder  Int                           @default(0)
-  isActive   Boolean                       @default(true)
-  createdAt  DateTime                      @default(now())
-  updatedAt  DateTime                      @updatedAt
-  category   subscriptionfeaturecategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  freeValue  String                      @default("false")
+  premValue  String                      @default("true")
+  sortOrder  Int                         @default(0)
+  isActive   Boolean                     @default(true)
+  createdAt  DateTime                    @default(now())
+  updatedAt  DateTime                    @updatedAt
+  category   subscriptionfeaturecategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@index([categoryId])
 }

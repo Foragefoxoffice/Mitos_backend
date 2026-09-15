@@ -6,6 +6,7 @@ const sharp = require("sharp");
 const admin = require("../../firebase");
 const { buildAlreadyNotifiedWhere } = require("../utils/notificationDedupe");
 const { sendInBatches } = require("../utils/batch");
+const { buildDateFilterWhere } = require("../utils/dateFilter");
 
 // See sendInBatches' comment (utils/batch.js) — bounds how many
 // admin.messaging().send() calls are ever in flight at once, so a large
@@ -59,44 +60,10 @@ const getNotificationResendWindowDays = async () => {
   return Number.isFinite(parsed) ? parsed : DEFAULT_NOTIFICATION_RESEND_WINDOW_DAYS;
 };
 
-// Trial/Premium "active" vs "expired" is always derived from these two
-// date columns (trialStartedAt/trialEndsAt/premiumExpiry) compared against
-// the current moment — never from a separate cached status flag, which
-// could be stale until the next run of cron/expireSubscriptions.js. Same
-// convention the existing subscriptionStatus TRIAL/TRIALED branches below
-// already use (both query status:'TRIALED', distinguished only by
-// trialEndsAt vs now) — this extends that same date-driven approach to
-// the "By Date" recipient filter instead of trusting a client-computed
-// id list, which can only ever be as fresh as whenever the admin's browser
-// tab last loaded the user list.
-const VALID_DATE_FIELDS = ["trialStartedAt", "trialEndsAt", "premiumExpiry"];
-const buildDateFilterWhere = ({ field, condition, days }) => {
-  if (!VALID_DATE_FIELDS.includes(field)) return null;
-
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const n = Math.max(1, Number(days) || 1);
-
-  if (condition === "today") {
-    const tomorrowStart = new Date(todayStart);
-    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-    return { [field]: { gte: todayStart, lt: tomorrowStart } };
-  }
-  if (condition === "in_next") {
-    // Inclusive of today through N days ahead (matches admin UI's own
-    // "diffDays >= 0 && diffDays <= days" semantics).
-    const rangeEnd = new Date(todayStart);
-    rangeEnd.setDate(rangeEnd.getDate() + n + 1);
-    return { [field]: { gte: todayStart, lt: rangeEnd } };
-  }
-  if (condition === "expired_within") {
-    // Strictly in the past (excludes today), within the last N days.
-    const rangeStart = new Date(todayStart);
-    rangeStart.setDate(rangeStart.getDate() - n);
-    return { [field]: { gte: rangeStart, lt: todayStart } };
-  }
-  return null;
-};
+// buildDateFilterWhere lives in utils/dateFilter.js (unit-tested there) —
+// covers today/in_next/expired_within (rolling ranges) and
+// exactly_days_ago (a single IST calendar day, for "Day N of Trial"
+// staged-campaign targeting).
 
 // Simple template renderer. Mark Booster fields come from
 // useranalyticssummary (joined on every findMany below, not a per-user

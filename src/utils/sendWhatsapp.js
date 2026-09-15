@@ -1,11 +1,36 @@
 const axios = require("axios");
 
+const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || "v22.0";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_ID;
 
-if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-  throw new Error("WhatsApp ENV variables missing");
-}
+const normalizePhone = (phone) => String(phone || "").replace(/\D/g, "");
+
+const assertConfigured = () => {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("WhatsApp ENV variables missing");
+  }
+};
+
+const postMessage = async (payload) => {
+  assertConfigured();
+  try {
+    const res = await axios.post(
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    return res.data;
+  } catch (error) {
+    console.error("🔥 WhatsApp Error:", error.response?.data || error.message);
+    throw error;
+  }
+};
 
 /**
  * Send WhatsApp OTP
@@ -15,7 +40,7 @@ if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
  * @param {boolean} options.includeUrlButton
  */
 async function sendWhatsappOTP(phone, otp, options = {}) {
-  const formattedPhone = phone.replace(/\D/g, "");
+  const formattedPhone = normalizePhone(phone);
   const otpText = String(otp);
 
   const components = [
@@ -25,7 +50,6 @@ async function sendWhatsappOTP(phone, otp, options = {}) {
     },
   ];
 
-  // URL button support
   if (options.includeUrlButton) {
     components.push({
       type: "button",
@@ -35,7 +59,7 @@ async function sendWhatsappOTP(phone, otp, options = {}) {
     });
   }
 
-  const payload = {
+  return postMessage({
     messaging_product: "whatsapp",
     to: formattedPhone,
     type: "template",
@@ -44,25 +68,41 @@ async function sendWhatsappOTP(phone, otp, options = {}) {
       language: { code: "en_US" },
       components,
     },
-  };
-
-  try {
-    const res = await axios.post(
-      `https://graph.facebook.com/v22.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    return res.data;
-  } catch (error) {
-    console.error("🔥 WhatsApp Error:", error.response?.data || error.message);
-    throw error;
-  }
+  });
 }
+
+const sendWhatsappTemplate = async ({
+  to,
+  name,
+  languageCode = "en_US",
+  components = [],
+}) =>
+  postMessage({
+    messaging_product: "whatsapp",
+    to: normalizePhone(to),
+    type: "template",
+    template: {
+      name,
+      language: { code: languageCode },
+      ...(components.length ? { components } : {}),
+    },
+  });
+
+const sendWhatsappText = async ({ to, text, previewUrl = false }) =>
+  postMessage({
+    messaging_product: "whatsapp",
+    to: normalizePhone(to),
+    type: "text",
+    text: {
+      preview_url: previewUrl,
+      body: String(text || ""),
+    },
+  });
+
+sendWhatsappOTP.sendWhatsappOTP = sendWhatsappOTP;
+sendWhatsappOTP.sendWhatsappTemplate = sendWhatsappTemplate;
+sendWhatsappOTP.sendWhatsappText = sendWhatsappText;
+sendWhatsappOTP.normalizePhone = normalizePhone;
+sendWhatsappOTP.isWhatsappConfigured = () => !!(WHATSAPP_TOKEN && WHATSAPP_PHONE_NUMBER_ID);
 
 module.exports = sendWhatsappOTP;
