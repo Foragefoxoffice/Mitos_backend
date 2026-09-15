@@ -24,7 +24,7 @@ const isMissingSalesTableError = (error) =>
 
 const trimPreview = (value, max = 255) => {
   const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 };
 
 const normalizeInboundText = (message) => {
