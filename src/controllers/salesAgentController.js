@@ -2,6 +2,17 @@ const axios = require("axios");
 const prisma = require("../utils/prisma");
 const sendWhatsappOTP = require("../utils/sendWhatsapp");
 const { getSalesAgentConfig } = require("../utils/salesAgentConfig");
+const { buildConversationListWhere } = require("../utils/salesConversationQuery");
+const { isEligibleSender, shouldGenerateAiReply } = require("../utils/salesReplyGate");
+const { fetchApprovedTemplates } = require("../utils/whatsappTemplates");
+const { buildUserSearchWhere } = require("../utils/salesRecipientSearch");
+const { sendInBatches } = require("../utils/batch");
+const {
+  MAX_CAMPAIGN_RECIPIENTS,
+  buildCampaignDedupeWhere,
+  validateCampaignRecipients,
+  buildTemplateBodyComponents,
+} = require("../utils/salesCampaignHelpers");
 
 const aiServiceClient = axios.create({
   baseURL: process.env.AI_SERVICE_URL,
@@ -192,6 +203,7 @@ const createSalesMessage = async ({
   status,
   text,
   rawPayload,
+  campaignId,
 }) => {
   if (!conversationId) return null;
   try {
@@ -205,6 +217,7 @@ const createSalesMessage = async ({
         status,
         text: text || null,
         rawPayload: rawPayload || undefined,
+        campaignId: campaignId || undefined,
       },
     });
   } catch (error) {
@@ -300,11 +313,12 @@ const sendTextMessage = async ({ to, text }) => {
   };
 };
 
-const sendTemplateMessage = async ({ to, templateName, languageCode }) => {
+const sendTemplateMessage = async ({ to, templateName, languageCode, components }) => {
   const response = await sendWhatsappOTP.sendWhatsappTemplate({
     to,
     name: templateName,
     languageCode,
+    ...(components && components.length ? { components } : {}),
   });
   return {
     providerResponse: response,
@@ -555,7 +569,25 @@ const handleStatusUpdate = async (status) => {
 const handleInboundMessage = async (message, value) => {
   const config = getSalesAgentConfig();
   const from = sendWhatsappOTP.normalizePhone(message.from || "");
-  if (!from || from !== config.ownerPhone || !config.ownerAutoReplyEnabled) {
+  if (!from) {
+    return { ignored: true };
+  }
+
+  const isOwner = from === config.ownerPhone;
+  let existingConversation = null;
+  try {
+    existingConversation = await prisma.whatsappconversation.findUnique({ where: { phoneNumber: from } });
+  } catch (error) {
+    if (!isMissingSalesTableError(error)) throw error;
+  }
+
+  if (
+    !isEligibleSender({
+      isOwner,
+      ownerAutoReplyEnabled: config.ownerAutoReplyEnabled,
+      conversationExists: !!existingConversation,
+    })
+  ) {
     return { ignored: true };
   }
 
@@ -567,7 +599,7 @@ const handleInboundMessage = async (message, value) => {
   const context = await buildUserSalesContext(from);
   const conversation = await ensureSalesConversation({
     phoneNumber: from,
-    ownerTest: true,
+    ownerTest: isOwner,
     preview: false,
     userId: context.user?.id,
   });
@@ -582,12 +614,21 @@ const handleInboundMessage = async (message, value) => {
     conversationId: conversation?.id,
     waMessageId: message.id,
     direction: "INBOUND",
-    senderRole: "OWNER",
+    senderRole: isOwner ? "OWNER" : "USER",
     messageType: message.type || "text",
     status: "received",
     text,
     rawPayload: { message, metadata: value?.metadata || null },
   });
+
+  if (!shouldGenerateAiReply({ conversationStatus: conversation?.status })) {
+    await touchConversation(conversation?.id, {
+      lastMessageAt: new Date(),
+      lastInboundAt: new Date(),
+      lastMessagePreview: trimPreview(text),
+    });
+    return { ignored: true, reason: "manual_takeover" };
+  }
 
   const aiReply = await generateSalesReply({
     historyMessages: history,
@@ -596,7 +637,7 @@ const handleInboundMessage = async (message, value) => {
     salesContext: {
       ...context,
       agentName: config.agentName,
-      ownerTest: true,
+      ownerTest: isOwner,
     },
   });
 
@@ -662,9 +703,356 @@ const handleWebhook = async (req, res) => {
   }
 };
 
+const getAdminConversations = async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+  const where = buildConversationListWhere({
+    search: req.query.search,
+    stage: req.query.stage,
+    userId: req.query.userId,
+  });
+
+  try {
+    const [conversations, total] = await Promise.all([
+      prisma.whatsappconversation.findMany({
+        where,
+        orderBy: { lastMessageAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          phoneNumber: true,
+          status: true,
+          ownerTest: true,
+          lastMessagePreview: true,
+          lastMessageAt: true,
+          createdAt: true,
+          user: { select: { id: true, name: true, email: true } },
+          lead: { select: { stage: true, leadScore: true } },
+        },
+      }),
+      prisma.whatsappconversation.count({ where }),
+    ]);
+
+    res.json({ conversations, total, page, pageSize });
+  } catch (error) {
+    if (isMissingSalesTableError(error)) {
+      return res.json({ conversations: [], total: 0, page, pageSize });
+    }
+    console.error("[salesAgentController] getAdminConversations failed:", error);
+    res.status(500).json({ message: "Failed to load conversations" });
+  }
+};
+
+const getAdminConversationDetail = async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ message: "Invalid conversation id" });
+  }
+
+  try {
+    const conversation = await prisma.whatsappconversation.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phoneNumber: true,
+            className: true,
+            status: true,
+            premiumExpiry: true,
+            trialStartedAt: true,
+            trialEndsAt: true,
+            hasUsedTrial: true,
+          },
+        },
+        lead: true,
+        messages: { orderBy: { createdAt: "asc" }, take: 300 },
+        audits: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            sourceMessageId: true,
+            provider: true,
+            model: true,
+            promptVersion: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ message: "Conversation not found" });
+    }
+
+    const auditByMessageId = {};
+    for (const audit of conversation.audits) {
+      if (audit.sourceMessageId != null) auditByMessageId[audit.sourceMessageId] = audit;
+    }
+
+    const user = conversation.user
+      ? { ...conversation.user, subscriptionState: classifySubscriptionState(conversation.user) }
+      : null;
+
+    res.json({
+      conversation: {
+        id: conversation.id,
+        phoneNumber: conversation.phoneNumber,
+        status: conversation.status,
+        ownerTest: conversation.ownerTest,
+        lastMessageAt: conversation.lastMessageAt,
+        createdAt: conversation.createdAt,
+      },
+      user,
+      lead: conversation.lead,
+      messages: conversation.messages,
+      auditByMessageId,
+    });
+  } catch (error) {
+    if (isMissingSalesTableError(error)) {
+      return res.status(404).json({ message: "Conversation not found" });
+    }
+    console.error("[salesAgentController] getAdminConversationDetail failed:", error);
+    res.status(500).json({ message: "Failed to load conversation" });
+  }
+};
+
+const setConversationTakeover = async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ message: "Invalid conversation id" });
+  }
+  const takeover = toBool(req.body?.takeover, false);
+
+  try {
+    const conversation = await prisma.whatsappconversation.update({
+      where: { id },
+      data: { status: takeover ? "PAUSED" : "ACTIVE" },
+      select: { id: true, status: true },
+    });
+    res.json({ conversation });
+  } catch (error) {
+    if (error.code === "P2025") {
+      return res.status(404).json({ message: "Conversation not found" });
+    }
+    console.error("[salesAgentController] setConversationTakeover failed:", error);
+    res.status(500).json({ message: "Failed to update conversation" });
+  }
+};
+
+const getAdminTemplates = async (req, res) => {
+  try {
+    const templates = await fetchApprovedTemplates();
+    res.json({ templates });
+  } catch (error) {
+    console.error("[salesAgentController] getAdminTemplates failed:", error.response?.data || error);
+    res.status(500).json({ message: "Failed to load WhatsApp templates" });
+  }
+};
+
+const searchRecipientUsers = async (req, res) => {
+  const where = buildUserSearchWhere(req.query.q);
+  if (!where) return res.json({ users: [] });
+
+  try {
+    const users = await prisma.user.findMany({
+      where,
+      select: { id: true, name: true, email: true, phoneNumber: true },
+      take: 10,
+    });
+    res.json({ users: users.filter((u) => !!u.phoneNumber) });
+  } catch (error) {
+    console.error("[salesAgentController] searchRecipientUsers failed:", error);
+    res.status(500).json({ message: "Failed to search users" });
+  }
+};
+
+const CAMPAIGN_BATCH_SIZE = 5;
+
+const sendCampaignToRecipient = async ({ recipient, template, campaignId }) => {
+  const phoneNumber = sendWhatsappOTP.normalizePhone(recipient.phoneNumber || "");
+  if (!phoneNumber) {
+    return { phoneNumber: recipient.phoneNumber || "", status: "failed", error: "Invalid phone number" };
+  }
+
+  try {
+    const existingRecent = await prisma.whatsappmessage.findFirst({
+      where: buildCampaignDedupeWhere({ phoneNumber, templateName: template.name }),
+    });
+    if (existingRecent && !recipient.forceResend) {
+      return { phoneNumber, status: "skipped", error: "Already sent this template recently" };
+    }
+
+    let userRecord = null;
+    if (recipient.userId) {
+      userRecord = await prisma.user.findUnique({ where: { id: Number(recipient.userId) } });
+    } else {
+      userRecord = await prisma.user.findUnique({ where: { phoneNumber } });
+    }
+
+    const conversation = await ensureSalesConversation({
+      phoneNumber,
+      ownerTest: false,
+      preview: false,
+      userId: userRecord?.id,
+    });
+
+    const existingLead = conversation?.id
+      ? await prisma.saleslead.findUnique({ where: { conversationId: conversation.id } })
+      : null;
+    if (conversation?.id && !existingLead) {
+      await ensureSalesLead({
+        conversationId: conversation.id,
+        userId: userRecord?.id,
+        phoneNumber,
+        stage: "CONTACTED",
+      });
+    }
+
+    const components = buildTemplateBodyComponents({
+      bodyVariableCount: template.bodyVariableCount,
+      recipientName: userRecord?.name,
+    });
+
+    const sent = await sendTemplateMessage({
+      to: phoneNumber,
+      templateName: template.name,
+      languageCode: template.language,
+      components,
+    });
+
+    await createSalesMessage({
+      conversationId: conversation?.id,
+      waMessageId: sent.messageId,
+      direction: "OUTBOUND",
+      senderRole: "AGENT",
+      messageType: "template",
+      status: "accepted",
+      text: `[template:${template.name}]`,
+      rawPayload: sent.providerResponse,
+      campaignId,
+    });
+    await touchConversation(conversation?.id, {
+      lastMessageAt: new Date(),
+      lastOutboundAt: new Date(),
+      lastMessagePreview: `[template:${template.name}]`,
+    });
+
+    return { phoneNumber, status: "sent" };
+  } catch (error) {
+    return {
+      phoneNumber,
+      status: "failed",
+      error: error.response?.data?.error?.message || error.message || "Send failed",
+    };
+  }
+};
+
+const createCampaign = async (req, res) => {
+  const { templateName, templateLanguage, recipients, forceResend } = req.body || {};
+
+  const validation = validateCampaignRecipients(recipients);
+  if (!validation.valid) {
+    return res.status(400).json({ message: validation.error });
+  }
+
+  let templates;
+  try {
+    templates = await fetchApprovedTemplates();
+  } catch (error) {
+    console.error("[salesAgentController] createCampaign template fetch failed:", error.response?.data || error);
+    return res.status(502).json({ message: "Failed to verify template with WhatsApp" });
+  }
+
+  const template = templates.find((t) => t.name === templateName && t.language === templateLanguage);
+  if (!template) {
+    return res.status(400).json({ message: "Template not found or not approved" });
+  }
+  if (template.bodyVariableCount > 1) {
+    return res.status(400).json({ message: "This template has more than one variable, which isn't supported yet" });
+  }
+
+  let campaign;
+  try {
+    campaign = await prisma.salescampaign.create({
+      data: {
+        templateName: template.name,
+        templateLanguage: template.language,
+        templateCategory: template.category,
+        totalTargeted: recipients.length,
+      },
+    });
+  } catch (error) {
+    if (isMissingSalesTableError(error)) {
+      campaign = { id: null };
+    } else {
+      console.error("[salesAgentController] createCampaign failed to create campaign row:", error);
+      return res.status(500).json({ message: "Failed to start campaign" });
+    }
+  }
+
+  const forceResendFlag = toBool(forceResend, false);
+  const results = await sendInBatches(
+    recipients.map((r) => ({ ...r, forceResend: forceResendFlag })),
+    CAMPAIGN_BATCH_SIZE,
+    (recipient) => sendCampaignToRecipient({ recipient, template, campaignId: campaign.id })
+  );
+
+  const sentCount = results.filter((r) => r.status === "sent").length;
+  const skippedCount = results.filter((r) => r.status === "skipped").length;
+  const failedCount = results.filter((r) => r.status === "failed").length;
+
+  if (campaign.id) {
+    try {
+      await prisma.salescampaign.update({
+        where: { id: campaign.id },
+        data: { sentCount, skippedCount, failedCount },
+      });
+    } catch (error) {
+      if (!isMissingSalesTableError(error)) {
+        console.error("[salesAgentController] createCampaign failed to update counts:", error);
+      }
+    }
+  }
+
+  res.json({
+    campaignId: campaign.id,
+    templateName: template.name,
+    sentCount,
+    skippedCount,
+    failedCount,
+    results,
+  });
+};
+
+const getAdminCampaigns = async (req, res) => {
+  try {
+    const campaigns = await prisma.salescampaign.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    res.json({ campaigns });
+  } catch (error) {
+    if (isMissingSalesTableError(error)) {
+      return res.json({ campaigns: [] });
+    }
+    console.error("[salesAgentController] getAdminCampaigns failed:", error);
+    res.status(500).json({ message: "Failed to load campaigns" });
+  }
+};
+
 module.exports = {
   getStatus,
   sendOwnerTestMessage,
   verifyWebhook,
   handleWebhook,
+  getAdminConversations,
+  getAdminConversationDetail,
+  setConversationTakeover,
+  getAdminTemplates,
+  searchRecipientUsers,
+  createCampaign,
+  getAdminCampaigns,
 };

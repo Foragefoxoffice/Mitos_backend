@@ -488,12 +488,15 @@ model whatsappmessage {
   status         String               @default("accepted") @db.VarChar(30)
   text           String?              @db.LongText
   rawPayload     Json?
+  campaignId     Int?
   createdAt      DateTime             @default(now())
   conversation   whatsappconversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  campaign       salescampaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   audits         aireplyaudit[]
 
   @@index([conversationId, createdAt])
   @@index([status])
+  @@index([campaignId])
 }
 
 model saleslead {
@@ -570,6 +573,21 @@ model aireplyaudit {
   @@index([conversationId])
   @@index([leadId])
   @@index([sourceMessageId])
+}
+
+model salescampaign {
+  id               Int               @id @default(autoincrement())
+  templateName     String            @db.VarChar(255)
+  templateLanguage String            @db.VarChar(10)
+  templateCategory String            @db.VarChar(20)
+  totalTargeted    Int               @default(0)
+  sentCount        Int               @default(0)
+  skippedCount     Int               @default(0)
+  failedCount      Int               @default(0)
+  createdAt        DateTime          @default(now())
+  messages         whatsappmessage[]
+
+  @@index([createdAt])
 }
 
 enum UserStatus {
