@@ -13,6 +13,9 @@ const {
   buildCampaignDedupeWhere,
   validateCampaignRecipients,
   buildTemplateBodyComponents,
+  resolveTemplateVariableValue,
+  validateVariableMappings,
+  VARIABLE_FIELD_OPTIONS,
 } = require("../utils/salesCampaignHelpers");
 
 const aiServiceClient = axios.create({
@@ -910,7 +913,7 @@ const getRecipientCandidates = async (req, res) => {
 
 const CAMPAIGN_BATCH_SIZE = 5;
 
-const sendCampaignToRecipient = async ({ recipient, template, campaignId }) => {
+const sendCampaignToRecipient = async ({ recipient, template, campaignId, variableMappings }) => {
   const phoneNumber = sendWhatsappOTP.normalizePhone(recipient.phoneNumber || "");
   if (!phoneNumber) {
     return { phoneNumber: recipient.phoneNumber || "", status: "failed", error: "Invalid phone number" };
@@ -950,9 +953,12 @@ const sendCampaignToRecipient = async ({ recipient, template, campaignId }) => {
       });
     }
 
+    const variableValues = (variableMappings || []).map((mapping) =>
+      resolveTemplateVariableValue({ field: mapping?.field, customValue: mapping?.customValue, userRecord })
+    );
     const components = buildTemplateBodyComponents({
       bodyVariableCount: template.bodyVariableCount,
-      recipientName: userRecord?.name,
+      variableValues,
     });
 
     const sent = await sendTemplateMessage({
@@ -989,8 +995,12 @@ const sendCampaignToRecipient = async ({ recipient, template, campaignId }) => {
   }
 };
 
+const getVariableFieldOptions = (req, res) => {
+  res.json({ options: VARIABLE_FIELD_OPTIONS });
+};
+
 const createCampaign = async (req, res) => {
-  const { templateName, templateLanguage, recipients, forceResend } = req.body || {};
+  const { templateName, templateLanguage, recipients, forceResend, variableMappings } = req.body || {};
 
   const validation = validateCampaignRecipients(recipients);
   if (!validation.valid) {
@@ -1009,8 +1019,10 @@ const createCampaign = async (req, res) => {
   if (!template) {
     return res.status(400).json({ message: "Template not found or not approved" });
   }
-  if (template.bodyVariableCount > 1) {
-    return res.status(400).json({ message: "This template has more than one variable, which isn't supported yet" });
+
+  const mappingValidation = validateVariableMappings({ bodyVariableCount: template.bodyVariableCount, variableMappings });
+  if (!mappingValidation.valid) {
+    return res.status(400).json({ message: mappingValidation.error });
   }
 
   let campaign;
@@ -1036,7 +1048,7 @@ const createCampaign = async (req, res) => {
   const results = await sendInBatches(
     recipients.map((r) => ({ ...r, forceResend: forceResendFlag })),
     CAMPAIGN_BATCH_SIZE,
-    (recipient) => sendCampaignToRecipient({ recipient, template, campaignId: campaign.id })
+    (recipient) => sendCampaignToRecipient({ recipient, template, campaignId: campaign.id, variableMappings })
   );
 
   const sentCount = results.filter((r) => r.status === "sent").length;
@@ -1093,6 +1105,7 @@ module.exports = {
   getAdminTemplates,
   searchRecipientUsers,
   getRecipientCandidates,
+  getVariableFieldOptions,
   createCampaign,
   getAdminCampaigns,
 };
