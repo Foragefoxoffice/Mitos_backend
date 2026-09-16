@@ -14,6 +14,7 @@ router.get("/admin/conversations/:id", verifyAdmin, ctrl.getAdminConversationDet
 router.post("/admin/conversations/:id/takeover", verifyAdmin, ctrl.setConversationTakeover);
 router.get("/admin/templates", verifyAdmin, ctrl.getAdminTemplates);
 router.get("/admin/user-search", verifyAdmin, ctrl.searchRecipientUsers);
+router.get("/admin/recipient-candidates", verifyAdmin, ctrl.getRecipientCandidates);
 router.post("/admin/campaigns", verifyAdmin, ctrl.createCampaign);
 router.get("/admin/campaigns", verifyAdmin, ctrl.getAdminCampaigns);
 

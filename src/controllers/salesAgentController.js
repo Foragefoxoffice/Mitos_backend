@@ -6,6 +6,7 @@ const { buildConversationListWhere } = require("../utils/salesConversationQuery"
 const { isEligibleSender, shouldGenerateAiReply } = require("../utils/salesReplyGate");
 const { fetchApprovedTemplates } = require("../utils/whatsappTemplates");
 const { buildUserSearchWhere } = require("../utils/salesRecipientSearch");
+const { buildRecipientCandidateWhere } = require("../utils/salesRecipientCandidates");
 const { sendInBatches } = require("../utils/batch");
 const {
   MAX_CAMPAIGN_RECIPIENTS,
@@ -869,6 +870,44 @@ const searchRecipientUsers = async (req, res) => {
   }
 };
 
+const getRecipientCandidates = async (req, res) => {
+  const { filterType, status, field, condition } = req.query;
+  const days = req.query.days != null ? Number(req.query.days) : undefined;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 100));
+
+  const where = buildRecipientCandidateWhere({
+    filterType,
+    status,
+    field,
+    condition,
+    days,
+    includeContacted: toBool(req.query.includeContacted, false),
+  });
+
+  if (!where) {
+    return res.status(400).json({ message: "Invalid filter parameters" });
+  }
+
+  try {
+    const [users, totalMatching] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: { id: true, name: true, phoneNumber: true },
+        orderBy: { id: "asc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json({ users, totalMatching, page, pageSize });
+  } catch (error) {
+    console.error("[salesAgentController] getRecipientCandidates failed:", error);
+    res.status(500).json({ message: "Failed to load recipient candidates" });
+  }
+};
+
 const CAMPAIGN_BATCH_SIZE = 5;
 
 const sendCampaignToRecipient = async ({ recipient, template, campaignId }) => {
@@ -1053,6 +1092,7 @@ module.exports = {
   setConversationTakeover,
   getAdminTemplates,
   searchRecipientUsers,
+  getRecipientCandidates,
   createCampaign,
   getAdminCampaigns,
 };
