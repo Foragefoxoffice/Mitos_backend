@@ -367,6 +367,19 @@ model coupon {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   payment    payment[]
+  personalCouponAssignments personalcouponassignment[]
+}
+
+model personalcouponassignment {
+  id         Int      @id @default(autoincrement())
+  identifier String   @db.VarChar(255)
+  couponId   Int
+  note       String?  @db.VarChar(255)
+  createdAt  DateTime @default(now())
+  coupon     coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@index([identifier])
+  @@index([couponId])
 }
 
 model neetplan {

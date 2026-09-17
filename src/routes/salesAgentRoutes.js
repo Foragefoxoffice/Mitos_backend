@@ -18,5 +18,12 @@ router.get("/admin/recipient-candidates", verifyAdmin, ctrl.getRecipientCandidat
 router.get("/admin/variable-field-options", verifyAdmin, ctrl.getVariableFieldOptions);
 router.post("/admin/campaigns", verifyAdmin, ctrl.createCampaign);
 router.get("/admin/campaigns", verifyAdmin, ctrl.getAdminCampaigns);
+router.post("/admin/personal-coupons/import", verifyAdmin, ctrl.importPersonalCoupons);
+router.get("/admin/personal-coupons", verifyAdmin, ctrl.getPersonalCoupons);
+router.get("/admin/knowledge", verifyAdmin, ctrl.getSalesKnowledgeBase);
+router.put("/admin/knowledge", verifyAdmin, ctrl.updateSalesKnowledgeBase);
+router.get("/admin/rules", verifyAdmin, ctrl.getSalesRules);
+router.post("/admin/rules", verifyAdmin, ctrl.createSalesRule);
+router.delete("/admin/rules/:id", verifyAdmin, ctrl.deleteSalesRule);
 
 module.exports = router;

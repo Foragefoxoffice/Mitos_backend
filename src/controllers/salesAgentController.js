@@ -93,6 +93,77 @@ const fetchActivePlans = async () => {
     .filter(Boolean);
 };
 
+const fetchActiveCoupons = async () => {
+  const now = new Date();
+  const coupons = await prisma.coupon.findMany({
+    where: {
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+  return coupons
+    .filter((c) => !c.maxUsage || c.usedCount < c.maxUsage)
+    .map((c) => ({ code: c.code, type: c.type, value: c.value, expiresAt: c.expiresAt }));
+};
+
+const fetchPersonalCoupon = async ({ phoneNumber, email }) => {
+  const identifiers = [phoneNumber, email].filter(Boolean);
+  if (!identifiers.length) return null;
+
+  const now = new Date();
+  const assignment = await prisma.personalcouponassignment.findFirst({
+    where: {
+      identifier: { in: identifiers },
+      coupon: {
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    include: { coupon: true },
+  });
+
+  if (!assignment || (assignment.coupon.maxUsage && assignment.coupon.usedCount >= assignment.coupon.maxUsage)) {
+    return null;
+  }
+
+  return {
+    code: assignment.coupon.code,
+    type: assignment.coupon.type,
+    value: assignment.coupon.value,
+    expiresAt: assignment.coupon.expiresAt,
+  };
+};
+
+// Best-effort only — a prospective (never-yet-converted) user has no
+// payment or plan row at all, so this is frequently null. That's expected,
+// not a bug: the AI is instructed to ask directly when this is unknown
+// rather than guess, since offering the wrong coupon type (a general code
+// to an iOS user, or vice versa) is worse than asking one extra question.
+const fetchKnownPlatform = async (userId) => {
+  if (!userId) return null;
+
+  const [lastPayment, lastPlan] = await Promise.all([
+    prisma.payment.findFirst({
+      where: { userId, platform: { not: null } },
+      orderBy: { createdAt: "desc" },
+      select: { platform: true, createdAt: true },
+    }),
+    prisma.userneetplan.findFirst({
+      where: { userId },
+      orderBy: { purchasedAt: "desc" },
+      select: { platform: true, purchasedAt: true },
+    }),
+  ]);
+
+  if (!lastPayment && !lastPlan) return null;
+  if (!lastPlan) return lastPayment.platform;
+  if (!lastPayment) return lastPlan.platform;
+  return lastPayment.createdAt > lastPlan.purchasedAt ? lastPayment.platform : lastPlan.platform;
+};
+
 const pickPrimaryPlan = (plans) => {
   if (!plans.length) return null;
   return [...plans].sort((a, b) => {
@@ -119,6 +190,9 @@ const buildUserSalesContext = async (phoneNumber) => {
   const plans = await fetchActivePlans();
   const primaryPlan = pickPrimaryPlan(plans);
   const links = buildSalesLinks(config, primaryPlan);
+  const activeCoupons = await fetchActiveCoupons();
+  const personalCoupon = await fetchPersonalCoupon({ phoneNumber, email: user?.email });
+  const knownPlatform = await fetchKnownPlatform(user?.id);
 
   const summary = user?.useranalyticssummary;
   return {
@@ -150,6 +224,9 @@ const buildUserSalesContext = async (phoneNumber) => {
     plans,
     primaryPlan,
     links,
+    activeCoupons,
+    personalCoupon,
+    knownPlatform,
   };
 };
 
@@ -1094,6 +1171,156 @@ const getAdminCampaigns = async (req, res) => {
   }
 };
 
+const importPersonalCoupons = async (req, res) => {
+  const { rows } = req.body || {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ message: "At least one row is required" });
+  }
+  if (rows.length > 500) {
+    return res.status(400).json({ message: "Cannot import more than 500 rows at once" });
+  }
+
+  const results = [];
+  for (const row of rows) {
+    const identifier = String(row.identifier || "").trim();
+    const couponCode = String(row.couponCode || "").trim();
+    const couponType = String(row.couponType || "").trim();
+    const couponValue = Number(row.couponValue);
+    const expiresAt = row.expiresAt ? new Date(row.expiresAt) : null;
+
+    if (!identifier || !couponCode || !couponType || !Number.isFinite(couponValue)) {
+      results.push({ identifier: identifier || "(blank)", status: "failed", error: "Missing or invalid required field(s)" });
+      continue;
+    }
+
+    try {
+      const existing = await prisma.coupon.findUnique({ where: { code: couponCode } });
+      if (existing) {
+        results.push({ identifier, status: "failed", error: `Coupon code ${couponCode} already exists` });
+        continue;
+      }
+
+      const coupon = await prisma.coupon.create({
+        data: {
+          code: couponCode,
+          type: couponType,
+          value: couponValue,
+          isActive: true,
+          maxUsage: 1,
+          maxPerUser: 1,
+          expiresAt: expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
+        },
+      });
+
+      await prisma.personalcouponassignment.create({
+        data: { identifier, couponId: coupon.id, note: row.note || null },
+      });
+
+      results.push({ identifier, status: "created", couponCode });
+    } catch (error) {
+      results.push({ identifier, status: "failed", error: error.message || "Failed to create" });
+    }
+  }
+
+  const createdCount = results.filter((r) => r.status === "created").length;
+  const failedCount = results.filter((r) => r.status === "failed").length;
+  res.json({ createdCount, failedCount, results });
+};
+
+const getPersonalCoupons = async (req, res) => {
+  try {
+    const assignments = await prisma.personalcouponassignment.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: { coupon: true },
+    });
+    res.json({
+      assignments: assignments.map((a) => ({
+        id: a.id,
+        identifier: a.identifier,
+        note: a.note,
+        createdAt: a.createdAt,
+        couponCode: a.coupon.code,
+        couponType: a.coupon.type,
+        couponValue: a.coupon.value,
+        couponExpiresAt: a.coupon.expiresAt,
+        couponUsedCount: a.coupon.usedCount,
+      })),
+    });
+  } catch (error) {
+    console.error("[salesAgentController] getPersonalCoupons failed:", error);
+    res.status(500).json({ message: "Failed to load personal coupons" });
+  }
+};
+
+const getSalesKnowledgeBase = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/sales/knowledge");
+    res.json(response.data);
+  } catch (error) {
+    console.error("[salesAgentController] getSalesKnowledgeBase failed:", error.response?.data || error);
+    res.status(error.response?.status || 500).json({
+      message: buildErrorMessage(error, "Failed to load knowledge base"),
+    });
+  }
+};
+
+const updateSalesKnowledgeBase = async (req, res) => {
+  const { content } = req.body || {};
+  if (typeof content !== "string" || !content.trim()) {
+    return res.status(400).json({ message: "content is required" });
+  }
+  try {
+    const response = await aiServiceClient.put("/internal/ai/sales/knowledge", { content });
+    res.json(response.data);
+  } catch (error) {
+    console.error("[salesAgentController] updateSalesKnowledgeBase failed:", error.response?.data || error);
+    res.status(error.response?.status || 500).json({
+      message: buildErrorMessage(error, "Failed to update knowledge base"),
+    });
+  }
+};
+
+const getSalesRules = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/sales/rules");
+    res.json(response.data);
+  } catch (error) {
+    console.error("[salesAgentController] getSalesRules failed:", error.response?.data || error);
+    res.status(error.response?.status || 500).json({
+      message: buildErrorMessage(error, "Failed to load rules"),
+    });
+  }
+};
+
+const createSalesRule = async (req, res) => {
+  const { text } = req.body || {};
+  if (typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ message: "text is required" });
+  }
+  try {
+    const response = await aiServiceClient.post("/internal/ai/sales/rules", { text: text.trim() });
+    res.json(response.data);
+  } catch (error) {
+    console.error("[salesAgentController] createSalesRule failed:", error.response?.data || error);
+    res.status(error.response?.status || 500).json({
+      message: buildErrorMessage(error, "Failed to create rule"),
+    });
+  }
+};
+
+const deleteSalesRule = async (req, res) => {
+  try {
+    const response = await aiServiceClient.delete(`/internal/ai/sales/rules/${req.params.id}`);
+    res.json(response.data);
+  } catch (error) {
+    console.error("[salesAgentController] deleteSalesRule failed:", error.response?.data || error);
+    res.status(error.response?.status || 500).json({
+      message: buildErrorMessage(error, "Failed to delete rule"),
+    });
+  }
+};
+
 module.exports = {
   getStatus,
   sendOwnerTestMessage,
@@ -1108,4 +1335,11 @@ module.exports = {
   getVariableFieldOptions,
   createCampaign,
   getAdminCampaigns,
+  importPersonalCoupons,
+  getPersonalCoupons,
+  getSalesKnowledgeBase,
+  updateSalesKnowledgeBase,
+  getSalesRules,
+  createSalesRule,
+  deleteSalesRule,
 };
