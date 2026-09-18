@@ -108,6 +108,47 @@ const fetchActiveCoupons = async () => {
     .map((c) => ({ code: c.code, type: c.type, value: c.value, expiresAt: c.expiresAt }));
 };
 
+// The same FREE-vs-PREMIUM comparison table shown in the app and managed
+// by admin at /admin/subscription-features — fetched fresh on every
+// message (not baked into the static knowledge doc) so it can never drift
+// out of sync with what admin actually configured.
+const fetchFeatureComparison = async () => {
+  const categories = await prisma.subscriptionfeaturecategory.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+    include: {
+      features: {
+        where: { isActive: true },
+        orderBy: { sortOrder: "asc" },
+      },
+    },
+  });
+  return categories.map((cat) => ({
+    category: cat.name,
+    features: cat.features.map((f) => ({ name: f.name, free: f.freeValue, premium: f.premValue })),
+  }));
+};
+
+// `appsetting` is a generic key/value store (also holds unrelated internal
+// config like notification dedup windows) — only pull the keys that are
+// actually safe/useful for the sales agent to reference, same admin page
+// (/admin/settings) as everything else here, fetched live so an admin edit
+// (e.g. changing the trial length) shows up on the AI's next reply.
+const SALES_RELEVANT_SETTING_KEYS = ["telegram_link", "trial_days", "ai_chat_daily_cap", "ai_chat_trial_cap"];
+
+const fetchAppSettingsForSales = async () => {
+  const rows = await prisma.appsetting.findMany({
+    where: { key: { in: SALES_RELEVANT_SETTING_KEYS } },
+  });
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    telegramLink: byKey.telegram_link || null,
+    trialDurationDays: byKey.trial_days || null,
+    premiumDailyAiChatCredits: byKey.ai_chat_daily_cap || null,
+    trialTotalAiChatCredits: byKey.ai_chat_trial_cap || null,
+  };
+};
+
 const fetchPersonalCoupon = async ({ phoneNumber, email }) => {
   const identifiers = [phoneNumber, email].filter(Boolean);
   if (!identifiers.length) return null;
@@ -193,6 +234,8 @@ const buildUserSalesContext = async (phoneNumber) => {
   const activeCoupons = await fetchActiveCoupons();
   const personalCoupon = await fetchPersonalCoupon({ phoneNumber, email: user?.email });
   const knownPlatform = await fetchKnownPlatform(user?.id);
+  const featureComparison = await fetchFeatureComparison();
+  const appSettings = await fetchAppSettingsForSales();
 
   const summary = user?.useranalyticssummary;
   return {
@@ -227,6 +270,8 @@ const buildUserSalesContext = async (phoneNumber) => {
     activeCoupons,
     personalCoupon,
     knownPlatform,
+    featureComparison,
+    appSettings,
   };
 };
 
