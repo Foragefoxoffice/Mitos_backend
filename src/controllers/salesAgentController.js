@@ -24,7 +24,7 @@ const aiServiceClient = axios.create({
   timeout: 60000,
 });
 
-const SALES_PROMPT_VERSION = "whatsapp-sales-agent-mvp-v1-deploycheck-20260918";
+const SALES_PROMPT_VERSION = "whatsapp-sales-agent-mvp-v1";
 
 const toBool = (value, fallback = false) => {
   if (value == null) return fallback;
@@ -464,8 +464,12 @@ const recordReplyAudit = async ({
       },
     });
   } catch (error) {
-    if (isMissingSalesTableError(error)) return;
-    throw error;
+    // This is a diagnostic audit log, not part of the user-facing flow —
+    // a bad value or transient DB issue here must never block the actual
+    // WhatsApp reply (which happens right after this call). Log and move
+    // on regardless of what went wrong, unlike every other helper in this
+    // file that only swallows a missing-table error.
+    console.error("[salesAgentController] recordReplyAudit failed (non-fatal):", error);
   }
 };
 
