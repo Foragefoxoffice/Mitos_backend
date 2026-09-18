@@ -24,7 +24,7 @@ const aiServiceClient = axios.create({
   timeout: 60000,
 });
 
-const SALES_PROMPT_VERSION = "whatsapp-sales-agent-mvp-v1";
+const SALES_PROMPT_VERSION = "whatsapp-sales-agent-mvp-v1-deploycheck-20260918";
 
 const toBool = (value, fallback = false) => {
   if (value == null) return fallback;
