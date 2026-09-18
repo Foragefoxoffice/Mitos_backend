@@ -65,47 +65,57 @@ const classifySubscriptionState = (user) => {
 };
 
 const fetchActivePlans = async () => {
-  const plans = await prisma.neetplan.findMany({
-    where: { isActive: true },
-    orderBy: { expiresAt: "asc" },
-    include: {
-      neetplanprice: {
-        where: { isActive: true, platform: "WEB" },
-        orderBy: { finalPrice: "asc" },
+  try {
+    const plans = await prisma.neetplan.findMany({
+      where: { isActive: true },
+      orderBy: { expiresAt: "asc" },
+      include: {
+        neetplanprice: {
+          where: { isActive: true, platform: "WEB" },
+          orderBy: { finalPrice: "asc" },
+        },
       },
-    },
-  });
+    });
 
-  return plans
-    .map((plan) => {
-      const price = plan.neetplanprice[0];
-      if (!price) return null;
-      return {
-        code: plan.code,
-        title: plan.title,
-        expiresAt: plan.expiresAt,
-        priceId: price.id,
-        finalPrice: price.finalPrice || price.price,
-        mrp: price.mrp || price.originalPrice || null,
-        currency: price.currency,
-      };
-    })
-    .filter(Boolean);
+    return plans
+      .map((plan) => {
+        const price = plan.neetplanprice[0];
+        if (!price) return null;
+        return {
+          code: plan.code,
+          title: plan.title,
+          expiresAt: plan.expiresAt,
+          priceId: price.id,
+          finalPrice: price.finalPrice || price.price,
+          mrp: price.mrp || price.originalPrice || null,
+          currency: price.currency,
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return [];
+    throw error;
+  }
 };
 
 const fetchActiveCoupons = async () => {
-  const now = new Date();
-  const coupons = await prisma.coupon.findMany({
-    where: {
-      isActive: true,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-  });
-  return coupons
-    .filter((c) => !c.maxUsage || c.usedCount < c.maxUsage)
-    .map((c) => ({ code: c.code, type: c.type, value: c.value, expiresAt: c.expiresAt }));
+  try {
+    const now = new Date();
+    const coupons = await prisma.coupon.findMany({
+      where: {
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    });
+    return coupons
+      .filter((c) => !c.maxUsage || c.usedCount < c.maxUsage)
+      .map((c) => ({ code: c.code, type: c.type, value: c.value, expiresAt: c.expiresAt }));
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return [];
+    throw error;
+  }
 };
 
 // The same FREE-vs-PREMIUM comparison table shown in the app and managed
@@ -113,20 +123,25 @@ const fetchActiveCoupons = async () => {
 // message (not baked into the static knowledge doc) so it can never drift
 // out of sync with what admin actually configured.
 const fetchFeatureComparison = async () => {
-  const categories = await prisma.subscriptionfeaturecategory.findMany({
-    where: { isActive: true },
-    orderBy: { sortOrder: "asc" },
-    include: {
-      features: {
-        where: { isActive: true },
-        orderBy: { sortOrder: "asc" },
+  try {
+    const categories = await prisma.subscriptionfeaturecategory.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: "asc" },
+      include: {
+        features: {
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
+        },
       },
-    },
-  });
-  return categories.map((cat) => ({
-    category: cat.name,
-    features: cat.features.map((f) => ({ name: f.name, free: f.freeValue, premium: f.premValue })),
-  }));
+    });
+    return categories.map((cat) => ({
+      category: cat.name,
+      features: cat.features.map((f) => ({ name: f.name, free: f.freeValue, premium: f.premValue })),
+    }));
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return [];
+    throw error;
+  }
 };
 
 // `appsetting` is a generic key/value store (also holds unrelated internal
@@ -136,46 +151,63 @@ const fetchFeatureComparison = async () => {
 // (e.g. changing the trial length) shows up on the AI's next reply.
 const SALES_RELEVANT_SETTING_KEYS = ["telegram_link", "trial_days", "ai_chat_daily_cap", "ai_chat_trial_cap"];
 
+const EMPTY_SALES_APP_SETTINGS = {
+  telegramLink: null,
+  trialDurationDays: null,
+  premiumDailyAiChatCredits: null,
+  trialTotalAiChatCredits: null,
+};
+
 const fetchAppSettingsForSales = async () => {
-  const rows = await prisma.appsetting.findMany({
-    where: { key: { in: SALES_RELEVANT_SETTING_KEYS } },
-  });
-  const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  return {
-    telegramLink: byKey.telegram_link || null,
-    trialDurationDays: byKey.trial_days || null,
-    premiumDailyAiChatCredits: byKey.ai_chat_daily_cap || null,
-    trialTotalAiChatCredits: byKey.ai_chat_trial_cap || null,
-  };
+  try {
+    const rows = await prisma.appsetting.findMany({
+      where: { key: { in: SALES_RELEVANT_SETTING_KEYS } },
+    });
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    return {
+      telegramLink: byKey.telegram_link || null,
+      trialDurationDays: byKey.trial_days || null,
+      premiumDailyAiChatCredits: byKey.ai_chat_daily_cap || null,
+      trialTotalAiChatCredits: byKey.ai_chat_trial_cap || null,
+    };
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return EMPTY_SALES_APP_SETTINGS;
+    throw error;
+  }
 };
 
 const fetchPersonalCoupon = async ({ phoneNumber, email }) => {
   const identifiers = [phoneNumber, email].filter(Boolean);
   if (!identifiers.length) return null;
 
-  const now = new Date();
-  const assignment = await prisma.personalcouponassignment.findFirst({
-    where: {
-      identifier: { in: identifiers },
-      coupon: {
-        isActive: true,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+  try {
+    const now = new Date();
+    const assignment = await prisma.personalcouponassignment.findFirst({
+      where: {
+        identifier: { in: identifiers },
+        coupon: {
+          isActive: true,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
       },
-    },
-    orderBy: { createdAt: "desc" },
-    include: { coupon: true },
-  });
+      orderBy: { createdAt: "desc" },
+      include: { coupon: true },
+    });
 
-  if (!assignment || (assignment.coupon.maxUsage && assignment.coupon.usedCount >= assignment.coupon.maxUsage)) {
-    return null;
+    if (!assignment || (assignment.coupon.maxUsage && assignment.coupon.usedCount >= assignment.coupon.maxUsage)) {
+      return null;
+    }
+
+    return {
+      code: assignment.coupon.code,
+      type: assignment.coupon.type,
+      value: assignment.coupon.value,
+      expiresAt: assignment.coupon.expiresAt,
+    };
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return null;
+    throw error;
   }
-
-  return {
-    code: assignment.coupon.code,
-    type: assignment.coupon.type,
-    value: assignment.coupon.value,
-    expiresAt: assignment.coupon.expiresAt,
-  };
 };
 
 // Best-effort only — a prospective (never-yet-converted) user has no
@@ -186,23 +218,28 @@ const fetchPersonalCoupon = async ({ phoneNumber, email }) => {
 const fetchKnownPlatform = async (userId) => {
   if (!userId) return null;
 
-  const [lastPayment, lastPlan] = await Promise.all([
-    prisma.payment.findFirst({
-      where: { userId, platform: { not: null } },
-      orderBy: { createdAt: "desc" },
-      select: { platform: true, createdAt: true },
-    }),
-    prisma.userneetplan.findFirst({
-      where: { userId },
-      orderBy: { purchasedAt: "desc" },
-      select: { platform: true, purchasedAt: true },
-    }),
-  ]);
+  try {
+    const [lastPayment, lastPlan] = await Promise.all([
+      prisma.payment.findFirst({
+        where: { userId, platform: { not: null } },
+        orderBy: { createdAt: "desc" },
+        select: { platform: true, createdAt: true },
+      }),
+      prisma.userneetplan.findFirst({
+        where: { userId },
+        orderBy: { purchasedAt: "desc" },
+        select: { platform: true, purchasedAt: true },
+      }),
+    ]);
 
-  if (!lastPayment && !lastPlan) return null;
-  if (!lastPlan) return lastPayment.platform;
-  if (!lastPayment) return lastPlan.platform;
-  return lastPayment.createdAt > lastPlan.purchasedAt ? lastPayment.platform : lastPlan.platform;
+    if (!lastPayment && !lastPlan) return null;
+    if (!lastPlan) return lastPayment.platform;
+    if (!lastPayment) return lastPlan.platform;
+    return lastPayment.createdAt > lastPlan.purchasedAt ? lastPayment.platform : lastPlan.platform;
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return null;
+    throw error;
+  }
 };
 
 const pickPrimaryPlan = (plans) => {
