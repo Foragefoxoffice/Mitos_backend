@@ -357,6 +357,20 @@ const ensureSalesLead = async ({ conversationId, userId, phoneNumber, stage }) =
   }
 };
 
+// WhatsApp can and does redeliver the same inbound webhook (Meta's own
+// documented retry behavior when a response doesn't arrive fast enough) —
+// without this, the retry hits the unique constraint on waMessageId and
+// crashes the whole reply flow instead of being a harmless no-op.
+const findExistingMessageByWaId = async (waMessageId) => {
+  if (!waMessageId) return null;
+  try {
+    return await prisma.whatsappmessage.findUnique({ where: { waMessageId } });
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return null;
+    throw error;
+  }
+};
+
 const createSalesMessage = async ({
   conversationId,
   waMessageId,
@@ -385,6 +399,9 @@ const createSalesMessage = async ({
     });
   } catch (error) {
     if (isMissingSalesTableError(error)) return null;
+    // Same redelivery race as above, just caught here as a fallback in case
+    // two retries land close enough together to both pass the earlier check.
+    if (error.code === "P2002" && waMessageId) return findExistingMessageByWaId(waMessageId);
     throw error;
   }
 };
@@ -757,6 +774,15 @@ const handleInboundMessage = async (message, value) => {
   const text = normalizeInboundText(message);
   if (!text) {
     return { ignored: true, reason: "unsupported_message_type" };
+  }
+
+  // WhatsApp redelivers webhooks that don't get a fast enough response —
+  // if we've already stored this exact message, this is a retry of
+  // something we already (or are already) handling. Bail out before doing
+  // any of the expensive work (AI call included) rather than just avoiding
+  // a crash further down.
+  if (await findExistingMessageByWaId(message.id)) {
+    return { ignored: true, reason: "duplicate_webhook_delivery" };
   }
 
   const context = await buildUserSalesContext(from);
