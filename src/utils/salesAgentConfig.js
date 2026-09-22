@@ -7,10 +7,12 @@ const parseBool = (value, fallback = false) => {
 
 const getSalesAgentConfig = () => {
   const ownerPhone = sendWhatsappOTP.normalizePhone(process.env.WHATSAPP_SALES_OWNER_PHONE || "");
+  const adminHandoffPhone = sendWhatsappOTP.normalizePhone(process.env.WHATSAPP_SALES_ADMIN_PHONE || "");
   const appBaseUrl = (process.env.FRONTEND_URL || process.env.APP_BASE_URL || "https://mitoslearning.com").replace(/\/+$/, "");
 
   return {
     ownerPhone,
+    adminHandoffPhone,
     ownerName: process.env.WHATSAPP_SALES_OWNER_NAME || "Owner Test",
     agentName: process.env.WHATSAPP_SALES_AGENT_NAME || "Mitos Premium Guide",
     webhookVerifyToken: process.env.WHATSAPP_SALES_WEBHOOK_VERIFY_TOKEN || "",

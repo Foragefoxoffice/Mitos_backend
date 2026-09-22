@@ -33,6 +33,16 @@ describe('buildConversationListWhere', () => {
     expect(buildConversationListWhere({ search: '   ' })).toEqual({});
   });
 
+  it('filters by needsHuman when true (boolean or string)', () => {
+    expect(buildConversationListWhere({ needsHuman: true })).toEqual({ needsHuman: true });
+    expect(buildConversationListWhere({ needsHuman: 'true' })).toEqual({ needsHuman: true });
+  });
+
+  it('ignores needsHuman when false or absent', () => {
+    expect(buildConversationListWhere({ needsHuman: false })).toEqual({});
+    expect(buildConversationListWhere({})).toEqual({});
+  });
+
   it('combines userId, stage, and search together', () => {
     expect(
       buildConversationListWhere({ userId: '7', stage: 'REPLIED', search: 'priya' })

@@ -1,4 +1,4 @@
-const buildConversationListWhere = ({ search, stage, userId } = {}) => {
+const buildConversationListWhere = ({ search, stage, userId, needsHuman } = {}) => {
   const where = {};
 
   if (userId != null && userId !== "") {
@@ -8,6 +8,10 @@ const buildConversationListWhere = ({ search, stage, userId } = {}) => {
 
   if (stage) {
     where.lead = { stage };
+  }
+
+  if (needsHuman === true || needsHuman === "true") {
+    where.needsHuman = true;
   }
 
   const term = String(search || "").trim();

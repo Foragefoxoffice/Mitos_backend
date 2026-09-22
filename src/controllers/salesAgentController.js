@@ -16,6 +16,14 @@ const {
   resolveTemplateVariableValue,
   validateVariableMappings,
   VARIABLE_FIELD_OPTIONS,
+  templateHasCopyCodeButton,
+  buildCouponCodeButtonComponent,
+  findCopyCodeButtonIndex,
+  findDynamicUrlButtonIndex,
+  templateHasDynamicUrlButton,
+  buildUrlButtonComponent,
+  templateNeedsHeaderMedia,
+  buildTemplateHeaderComponent,
 } = require("../utils/salesCampaignHelpers");
 
 const aiServiceClient = axios.create({
@@ -242,6 +250,31 @@ const fetchKnownPlatform = async (userId) => {
   }
 };
 
+// The Test Series tab is a SEPARATE product from the main subscription
+// plans above — individually named series, each individually priced and
+// purchased on its own, not covered by `plans`/`featureComparison`. Fetched
+// live from the same testseriespackage table the app/admin already use so
+// the AI can name real series and real prices instead of describing the
+// subscription's generic "custom chapter tests" feature when asked.
+const fetchActiveTestSeries = async () => {
+  try {
+    const packages = await prisma.testseriespackage.findMany({
+      where: { isActive: true },
+      orderBy: { position: "asc" },
+      take: 10,
+    });
+    return packages.map((p) => ({
+      title: p.title,
+      description: p.description || null,
+      price: p.price,
+      mrp: p.mrp || null,
+    }));
+  } catch (error) {
+    if (isMissingSalesTableError(error)) return [];
+    throw error;
+  }
+};
+
 const pickPrimaryPlan = (plans) => {
   if (!plans.length) return null;
   return [...plans].sort((a, b) => {
@@ -273,6 +306,7 @@ const buildUserSalesContext = async (phoneNumber) => {
   const knownPlatform = await fetchKnownPlatform(user?.id);
   const featureComparison = await fetchFeatureComparison();
   const appSettings = await fetchAppSettingsForSales();
+  const testSeries = await fetchActiveTestSeries();
 
   const summary = user?.useranalyticssummary;
   return {
@@ -309,6 +343,7 @@ const buildUserSalesContext = async (phoneNumber) => {
     knownPlatform,
     featureComparison,
     appSettings,
+    testSeries,
   };
 };
 
@@ -489,6 +524,41 @@ const generateSalesReply = async ({
   return response.data;
 };
 
+// The prompt instructs the model to end its reply with this hidden marker
+// whenever it decides the conversation needs a human teammate (upset user,
+// refund/legal, an account/technical question it has no data for, etc).
+// It's stripped before anything reaches the customer — the customer only
+// ever sees the human-readable sentence the model wrote before the marker.
+const HANDOFF_MARKER_REGEX = /\n?\[\[HANDOFF(?::\s*([^\]]*))?\]\]\s*$/i;
+
+const extractHandoff = (replyText) => {
+  const text = String(replyText || "");
+  const match = text.match(HANDOFF_MARKER_REGEX);
+  if (!match) return { cleanReply: text, needsHuman: false, reason: null };
+  return {
+    cleanReply: text.slice(0, match.index).trim(),
+    needsHuman: true,
+    reason: (match[1] || "").trim() || "AI flagged this conversation for human follow-up",
+  };
+};
+
+// Best-effort alert to whoever's watching the admin WhatsApp number — never
+// allowed to block or fail the actual customer-facing reply that triggered
+// it, same reasoning as recordReplyAudit's non-fatal catch.
+const notifyAdminHandoff = async ({ phoneNumber, customerName, reason }) => {
+  const config = getSalesAgentConfig();
+  if (!config.adminHandoffPhone) return;
+  try {
+    const label = customerName ? `${customerName} (${phoneNumber})` : phoneNumber;
+    await sendWhatsappOTP.sendWhatsappText({
+      to: config.adminHandoffPhone,
+      text: `🔔 WhatsApp Sales Agent needs a human.\nCustomer: ${label}\nReason: ${reason}\nOpen the conversation in admin to take over.`,
+    });
+  } catch (error) {
+    console.error("[salesAgentController] notifyAdminHandoff failed (non-fatal):", error);
+  }
+};
+
 const sendTextMessage = async ({ to, text }) => {
   const response = await sendWhatsappOTP.sendWhatsappText({ to, text });
   return {
@@ -582,6 +652,8 @@ const sendOwnerTestMessage = async (req, res) => {
         },
       });
 
+      const { cleanReply, needsHuman, reason } = extractHandoff(aiReply.reply);
+
       await recordReplyAudit({
         conversationId: conversation?.id,
         leadId: lead?.id,
@@ -590,10 +662,11 @@ const sendOwnerTestMessage = async (req, res) => {
         model: aiReply.model,
         systemPrompt: aiReply.system,
         promptText: aiReply.prompt,
-        replyText: aiReply.reply,
+        replyText: cleanReply,
         toolTrace: {
           links: context.links,
           primaryPlan: context.primaryPlan,
+          needsHuman,
         },
       });
 
@@ -602,13 +675,14 @@ const sendOwnerTestMessage = async (req, res) => {
           mode: "reply-preview",
           sent: false,
           ownerPhone: config.ownerPhone,
-          reply: aiReply.reply,
+          reply: cleanReply,
+          needsHuman,
           provider: aiReply.provider,
           model: aiReply.model,
         });
       }
 
-      const sent = await sendTextMessage({ to: config.ownerPhone, text: aiReply.reply });
+      const sent = await sendTextMessage({ to: config.ownerPhone, text: cleanReply });
       await createSalesMessage({
         conversationId: conversation?.id,
         waMessageId: sent.messageId,
@@ -616,20 +690,22 @@ const sendOwnerTestMessage = async (req, res) => {
         senderRole: "AGENT",
         messageType: "text",
         status: "accepted",
-        text: aiReply.reply,
+        text: cleanReply,
         rawPayload: sent.providerResponse,
       });
       await touchConversation(conversation?.id, {
         lastMessageAt: new Date(),
         lastInboundAt: new Date(),
         lastOutboundAt: new Date(),
-        lastMessagePreview: trimPreview(aiReply.reply),
+        lastMessagePreview: trimPreview(cleanReply),
+        ...(needsHuman ? { needsHuman: true, needsHumanReason: reason, needsHumanAt: new Date() } : {}),
       });
       return res.json({
         mode: "reply",
         sent: true,
         ownerPhone: config.ownerPhone,
-        reply: aiReply.reply,
+        reply: cleanReply,
+        needsHuman,
         provider: aiReply.provider,
         model: aiReply.model,
         messageId: sent.messageId,
@@ -834,6 +910,8 @@ const handleInboundMessage = async (message, value) => {
     },
   });
 
+  const { cleanReply, needsHuman, reason } = extractHandoff(aiReply.reply);
+
   await recordReplyAudit({
     conversationId: conversation?.id,
     leadId: lead?.id,
@@ -842,14 +920,15 @@ const handleInboundMessage = async (message, value) => {
     model: aiReply.model,
     systemPrompt: aiReply.system,
     promptText: aiReply.prompt,
-    replyText: aiReply.reply,
+    replyText: cleanReply,
     toolTrace: {
       links: context.links,
       primaryPlan: context.primaryPlan,
+      needsHuman,
     },
   });
 
-  const sent = await sendTextMessage({ to: from, text: aiReply.reply });
+  const sent = await sendTextMessage({ to: from, text: cleanReply });
   await createSalesMessage({
     conversationId: conversation?.id,
     waMessageId: sent.messageId,
@@ -857,15 +936,20 @@ const handleInboundMessage = async (message, value) => {
     senderRole: "AGENT",
     messageType: "text",
     status: "accepted",
-    text: aiReply.reply,
+    text: cleanReply,
     rawPayload: sent.providerResponse,
   });
   await touchConversation(conversation?.id, {
     lastMessageAt: new Date(),
     lastInboundAt: new Date(),
     lastOutboundAt: new Date(),
-    lastMessagePreview: trimPreview(aiReply.reply),
+    lastMessagePreview: trimPreview(cleanReply),
+    ...(needsHuman ? { needsHuman: true, needsHumanReason: reason, needsHumanAt: new Date() } : {}),
   });
+
+  if (needsHuman) {
+    await notifyAdminHandoff({ phoneNumber: from, customerName: context.user?.name, reason });
+  }
 
   return { ignored: false };
 };
@@ -903,6 +987,7 @@ const getAdminConversations = async (req, res) => {
     search: req.query.search,
     stage: req.query.stage,
     userId: req.query.userId,
+    needsHuman: req.query.needsHuman,
   });
 
   try {
@@ -920,6 +1005,9 @@ const getAdminConversations = async (req, res) => {
           lastMessagePreview: true,
           lastMessageAt: true,
           createdAt: true,
+          needsHuman: true,
+          needsHumanReason: true,
+          needsHumanAt: true,
           user: { select: { id: true, name: true, email: true } },
           lead: { select: { stage: true, leadScore: true } },
         },
@@ -1102,7 +1190,7 @@ const getRecipientCandidates = async (req, res) => {
 
 const CAMPAIGN_BATCH_SIZE = 5;
 
-const sendCampaignToRecipient = async ({ recipient, template, campaignId, variableMappings }) => {
+const sendCampaignToRecipient = async ({ recipient, template, campaignId, variableMappings, couponCodeMapping, headerMediaUrl, urlButtonValue }) => {
   const phoneNumber = sendWhatsappOTP.normalizePhone(recipient.phoneNumber || "");
   if (!phoneNumber) {
     return { phoneNumber: recipient.phoneNumber || "", status: "failed", error: "Invalid phone number" };
@@ -1118,9 +1206,15 @@ const sendCampaignToRecipient = async ({ recipient, template, campaignId, variab
 
     let userRecord = null;
     if (recipient.userId) {
-      userRecord = await prisma.user.findUnique({ where: { id: Number(recipient.userId) } });
+      userRecord = await prisma.user.findUnique({
+        where: { id: Number(recipient.userId) },
+        include: { useranalyticssummary: true },
+      });
     } else {
-      userRecord = await prisma.user.findUnique({ where: { phoneNumber } });
+      userRecord = await prisma.user.findUnique({
+        where: { phoneNumber },
+        include: { useranalyticssummary: true },
+      });
     }
 
     const conversation = await ensureSalesConversation({
@@ -1145,10 +1239,34 @@ const sendCampaignToRecipient = async ({ recipient, template, campaignId, variab
     const variableValues = (variableMappings || []).map((mapping) =>
       resolveTemplateVariableValue({ field: mapping?.field, customValue: mapping?.customValue, userRecord })
     );
-    const components = buildTemplateBodyComponents({
+    const bodyComponents = buildTemplateBodyComponents({
       bodyVariableCount: template.bodyVariableCount,
       variableValues,
     });
+
+    let couponCode = null;
+    if (couponCodeMapping?.field === "custom") {
+      couponCode = couponCodeMapping.customValue || null;
+    } else if (couponCodeMapping?.field === "personalCoupon") {
+      const personal = await fetchPersonalCoupon({ phoneNumber, email: userRecord?.email });
+      couponCode = personal?.code || null;
+    } else if (couponCodeMapping?.field === "activeCoupon") {
+      const active = await fetchActiveCoupons();
+      couponCode = active?.[0]?.code || null;
+    }
+    const copyCodeButtonComponent = buildCouponCodeButtonComponent(couponCode, findCopyCodeButtonIndex(template));
+
+    const urlButtonIndex = findDynamicUrlButtonIndex(template);
+    const urlButtonComponent = buildUrlButtonComponent(urlButtonValue, urlButtonIndex);
+
+    const headerComponent = buildTemplateHeaderComponent(template.headerFormat, headerMediaUrl);
+
+    const components = [
+      ...(headerComponent ? [headerComponent] : []),
+      ...bodyComponents,
+      ...(copyCodeButtonComponent ? [copyCodeButtonComponent] : []),
+      ...(urlButtonComponent ? [urlButtonComponent] : []),
+    ];
 
     const sent = await sendTemplateMessage({
       to: phoneNumber,
@@ -1189,7 +1307,7 @@ const getVariableFieldOptions = (req, res) => {
 };
 
 const createCampaign = async (req, res) => {
-  const { templateName, templateLanguage, recipients, forceResend, variableMappings } = req.body || {};
+  const { templateName, templateLanguage, recipients, forceResend, variableMappings, couponCodeMapping, headerMediaUrl, urlButtonValue } = req.body || {};
 
   const validation = validateCampaignRecipients(recipients);
   if (!validation.valid) {
@@ -1212,6 +1330,19 @@ const createCampaign = async (req, res) => {
   const mappingValidation = validateVariableMappings({ bodyVariableCount: template.bodyVariableCount, variableMappings });
   if (!mappingValidation.valid) {
     return res.status(400).json({ message: mappingValidation.error });
+  }
+
+  if (templateHasCopyCodeButton(template) && !couponCodeMapping?.field) {
+    return res.status(400).json({ message: "This template has a coupon-code button — choose how to fill it before sending" });
+  }
+  if (couponCodeMapping?.field === "custom" && !String(couponCodeMapping.customValue || "").trim()) {
+    return res.status(400).json({ message: "Enter the fixed coupon code" });
+  }
+  if (templateNeedsHeaderMedia(template) && !String(headerMediaUrl || "").trim()) {
+    return res.status(400).json({ message: "This template needs a header image/video/document URL" });
+  }
+  if (templateHasDynamicUrlButton(template) && !String(urlButtonValue || "").trim()) {
+    return res.status(400).json({ message: "This template's button needs a value before sending" });
   }
 
   let campaign;
@@ -1237,7 +1368,7 @@ const createCampaign = async (req, res) => {
   const results = await sendInBatches(
     recipients.map((r) => ({ ...r, forceResend: forceResendFlag })),
     CAMPAIGN_BATCH_SIZE,
-    (recipient) => sendCampaignToRecipient({ recipient, template, campaignId: campaign.id, variableMappings })
+    (recipient) => sendCampaignToRecipient({ recipient, template, campaignId: campaign.id, variableMappings, couponCodeMapping, headerMediaUrl, urlButtonValue })
   );
 
   const sentCount = results.filter((r) => r.status === "sent").length;

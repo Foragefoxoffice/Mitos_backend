@@ -480,6 +480,9 @@ model whatsappconversation {
   lastInboundAt      DateTime?
   lastOutboundAt     DateTime?
   lastMessagePreview String?           @db.VarChar(255)
+  needsHuman         Boolean           @default(false)
+  needsHumanReason   String?           @db.VarChar(255)
+  needsHumanAt       DateTime?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
   user               user?             @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -489,6 +492,7 @@ model whatsappconversation {
 
   @@index([userId])
   @@index([ownerTest])
+  @@index([needsHuman])
 }
 
 model whatsappmessage {

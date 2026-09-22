@@ -7,6 +7,8 @@ const countBodyVariables = (bodyText) => {
   return matches ? new Set(matches).size : 0;
 };
 
+const hasDynamicUrl = (url) => /\{\{\d+\}\}/.test(String(url || ""));
+
 const parseTemplateComponents = (components) => {
   const list = Array.isArray(components) ? components : [];
   const header = list.find((c) => c.type === "HEADER");
@@ -16,11 +18,16 @@ const parseTemplateComponents = (components) => {
   const bodyText = body?.text || "";
 
   return {
+    headerFormat: header?.format || null,
     headerText: header?.format === "TEXT" ? header.text || "" : "",
     bodyText,
     bodyVariableCount: countBodyVariables(bodyText),
     footerText: footer?.text || "",
-    buttons: (buttonsComponent?.buttons || []).map((b) => ({ type: b.type, text: b.text || "" })),
+    buttons: (buttonsComponent?.buttons || []).map((b) => ({
+      type: b.type,
+      text: b.text || "",
+      hasDynamicUrl: b.type === "URL" && hasDynamicUrl(b.url),
+    })),
   };
 };
 
@@ -49,4 +56,4 @@ const fetchApprovedTemplates = async () => {
     }));
 };
 
-module.exports = { parseTemplateComponents, countBodyVariables, fetchApprovedTemplates };
+module.exports = { parseTemplateComponents, countBodyVariables, hasDynamicUrl, fetchApprovedTemplates };

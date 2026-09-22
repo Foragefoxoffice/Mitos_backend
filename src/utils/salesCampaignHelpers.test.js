@@ -8,6 +8,14 @@ const {
   resolveTemplateVariableValue,
   validateVariableMappings,
   buildTemplateBodyComponents,
+  templateHasCopyCodeButton,
+  buildCouponCodeButtonComponent,
+  findCopyCodeButtonIndex,
+  findDynamicUrlButtonIndex,
+  templateHasDynamicUrlButton,
+  buildUrlButtonComponent,
+  templateNeedsHeaderMedia,
+  buildTemplateHeaderComponent,
 } = require('./salesCampaignHelpers');
 
 describe('buildCampaignDedupeWhere', () => {
@@ -106,6 +114,19 @@ describe('resolveTemplateVariableValue', () => {
     expect(resolveTemplateVariableValue({ field: 'premiumExpiry', userRecord })).toBe('11 Sep 2027');
   });
 
+  it('returns the Mark Booster weakest chapter from the linked analytics summary', () => {
+    expect(
+      resolveTemplateVariableValue({
+        field: 'weakestChapter',
+        userRecord: { useranalyticssummary: { weakestChapter: 'Human Physiology' } },
+      })
+    ).toBe('Human Physiology');
+  });
+
+  it('returns null for weakestChapter when no analytics summary exists', () => {
+    expect(resolveTemplateVariableValue({ field: 'weakestChapter', userRecord: {} })).toBeNull();
+  });
+
   it('formats currentDate using the provided now', () => {
     const now = new Date('2026-09-16T00:00:00.000Z');
     expect(resolveTemplateVariableValue({ field: 'currentDate', userRecord: {}, now })).toBe('16 Sep 2026');
@@ -193,5 +214,138 @@ describe('buildTemplateBodyComponents', () => {
     expect(buildTemplateBodyComponents({ bodyVariableCount: 2, variableValues: ['Priya'] })).toEqual([
       { type: 'body', parameters: [{ type: 'text', text: 'Priya' }, { type: 'text', text: 'there' }] },
     ]);
+  });
+});
+
+describe('templateHasCopyCodeButton', () => {
+  it('returns true when a COPY_CODE button is present', () => {
+    expect(templateHasCopyCodeButton({ buttons: [{ type: 'COPY_CODE', text: 'Copy offer code' }] })).toBe(true);
+  });
+
+  it('returns false when there are no buttons', () => {
+    expect(templateHasCopyCodeButton({ buttons: [] })).toBe(false);
+    expect(templateHasCopyCodeButton({})).toBe(false);
+  });
+
+  it('returns false when buttons exist but none are COPY_CODE', () => {
+    expect(templateHasCopyCodeButton({ buttons: [{ type: 'QUICK_REPLY', text: 'NEET 2027' }] })).toBe(false);
+  });
+});
+
+describe('buildCouponCodeButtonComponent', () => {
+  it('returns null when no coupon code is given', () => {
+    expect(buildCouponCodeButtonComponent(null)).toBeNull();
+    expect(buildCouponCodeButtonComponent(undefined)).toBeNull();
+    expect(buildCouponCodeButtonComponent('')).toBeNull();
+  });
+
+  it('builds the exact WhatsApp button component shape', () => {
+    expect(buildCouponCodeButtonComponent('MITOSAI17')).toEqual({
+      type: 'button',
+      sub_type: 'copy_code',
+      index: '0',
+      parameters: [{ type: 'coupon_code', coupon_code: 'MITOSAI17' }],
+    });
+  });
+
+  it('uses a custom index when given one', () => {
+    expect(buildCouponCodeButtonComponent('MITOSAI17', 2)).toEqual({
+      type: 'button',
+      sub_type: 'copy_code',
+      index: '2',
+      parameters: [{ type: 'coupon_code', coupon_code: 'MITOSAI17' }],
+    });
+  });
+});
+
+describe('findCopyCodeButtonIndex / findDynamicUrlButtonIndex', () => {
+  it('finds a COPY_CODE button index', () => {
+    expect(findCopyCodeButtonIndex({ buttons: [{ type: 'QUICK_REPLY' }, { type: 'COPY_CODE' }] })).toBe(1);
+  });
+
+  it('returns -1 when no COPY_CODE button exists', () => {
+    expect(findCopyCodeButtonIndex({ buttons: [{ type: 'QUICK_REPLY' }] })).toBe(-1);
+    expect(findCopyCodeButtonIndex({})).toBe(-1);
+  });
+
+  it('finds a dynamic URL button index, ignoring a static one', () => {
+    expect(
+      findDynamicUrlButtonIndex({
+        buttons: [
+          { type: 'URL', hasDynamicUrl: false },
+          { type: 'URL', hasDynamicUrl: true },
+        ],
+      })
+    ).toBe(1);
+  });
+
+  it('returns -1 when there is no dynamic URL button', () => {
+    expect(findDynamicUrlButtonIndex({ buttons: [{ type: 'URL', hasDynamicUrl: false }] })).toBe(-1);
+  });
+});
+
+describe('templateHasDynamicUrlButton', () => {
+  it('is true when a dynamic URL button exists', () => {
+    expect(templateHasDynamicUrlButton({ buttons: [{ type: 'URL', hasDynamicUrl: true }] })).toBe(true);
+  });
+
+  it('is false otherwise', () => {
+    expect(templateHasDynamicUrlButton({ buttons: [{ type: 'URL', hasDynamicUrl: false }] })).toBe(false);
+    expect(templateHasDynamicUrlButton({})).toBe(false);
+  });
+});
+
+describe('buildUrlButtonComponent', () => {
+  it('returns null when the value or index is missing', () => {
+    expect(buildUrlButtonComponent(null, 0)).toBeNull();
+    expect(buildUrlButtonComponent('', 0)).toBeNull();
+    expect(buildUrlButtonComponent('promo123', -1)).toBeNull();
+    expect(buildUrlButtonComponent('promo123', null)).toBeNull();
+  });
+
+  it('builds the exact WhatsApp URL button component shape', () => {
+    expect(buildUrlButtonComponent('promo123', 1)).toEqual({
+      type: 'button',
+      sub_type: 'url',
+      index: '1',
+      parameters: [{ type: 'text', text: 'promo123' }],
+    });
+  });
+});
+
+describe('templateNeedsHeaderMedia', () => {
+  it('is true for IMAGE/VIDEO/DOCUMENT headers', () => {
+    expect(templateNeedsHeaderMedia({ headerFormat: 'IMAGE' })).toBe(true);
+    expect(templateNeedsHeaderMedia({ headerFormat: 'VIDEO' })).toBe(true);
+    expect(templateNeedsHeaderMedia({ headerFormat: 'DOCUMENT' })).toBe(true);
+  });
+
+  it('is false for TEXT or no header', () => {
+    expect(templateNeedsHeaderMedia({ headerFormat: 'TEXT' })).toBe(false);
+    expect(templateNeedsHeaderMedia({ headerFormat: null })).toBe(false);
+    expect(templateNeedsHeaderMedia({})).toBe(false);
+  });
+});
+
+describe('buildTemplateHeaderComponent', () => {
+  it('returns null when the format is not media or the URL is missing', () => {
+    expect(buildTemplateHeaderComponent('TEXT', 'https://example.com/a.jpg')).toBeNull();
+    expect(buildTemplateHeaderComponent('IMAGE', null)).toBeNull();
+    expect(buildTemplateHeaderComponent('IMAGE', '')).toBeNull();
+  });
+
+  it('builds the exact WhatsApp header component shape per media type', () => {
+    expect(buildTemplateHeaderComponent('IMAGE', 'https://example.com/a.jpg')).toEqual({
+      type: 'header',
+      parameters: [{ type: 'image', image: { link: 'https://example.com/a.jpg' } }],
+    });
+    expect(buildTemplateHeaderComponent('VIDEO', 'https://example.com/a.mp4')).toEqual({
+      type: 'header',
+      parameters: [{ type: 'video', video: { link: 'https://example.com/a.mp4' } }],
+    });
+    expect(buildTemplateHeaderComponent('DOCUMENT', 'https://example.com/a.pdf')).toEqual({
+      type: 'header',
+      parameters: [{ type: 'document', document: { link: 'https://example.com/a.pdf' } }],
+    });
   });
 });

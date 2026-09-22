@@ -29,6 +29,7 @@ const VARIABLE_FIELD_OPTIONS = [
   { value: "trialStartedAt", label: "Trial start date" },
   { value: "trialEndsAt", label: "Trial end date" },
   { value: "premiumExpiry", label: "Premium expiry date" },
+  { value: "weakestChapter", label: "Mark Booster — weakest chapter" },
   { value: "currentDate", label: "Today's date" },
   { value: "custom", label: "Fixed text for everyone" },
 ];
@@ -55,6 +56,7 @@ const resolveTemplateVariableValue = ({ field, customValue, userRecord, now = ne
   if (field === "trialStartedAt") return formatDateValue(userRecord?.trialStartedAt);
   if (field === "trialEndsAt") return formatDateValue(userRecord?.trialEndsAt);
   if (field === "premiumExpiry") return formatDateValue(userRecord?.premiumExpiry);
+  if (field === "weakestChapter") return userRecord?.useranalyticssummary?.weakestChapter || null;
   if (field === "currentDate") return formatDateValue(now);
   if (field === "custom") return customValue || null;
   return userRecord?.name || null;
@@ -87,6 +89,51 @@ const buildTemplateBodyComponents = ({ bodyVariableCount, variableValues }) => {
   return [{ type: "body", parameters }];
 };
 
+const templateHasCopyCodeButton = (template) =>
+  Array.isArray(template?.buttons) && template.buttons.some((b) => b.type === "COPY_CODE");
+
+const buildCouponCodeButtonComponent = (couponCode, index = 0) => {
+  if (!couponCode) return null;
+  return {
+    type: "button",
+    sub_type: "copy_code",
+    index: String(index),
+    parameters: [{ type: "coupon_code", coupon_code: couponCode }],
+  };
+};
+
+const findButtonIndex = (template, predicate) =>
+  Array.isArray(template?.buttons) ? template.buttons.findIndex(predicate) : -1;
+
+const findCopyCodeButtonIndex = (template) => findButtonIndex(template, (b) => b.type === "COPY_CODE");
+
+const findDynamicUrlButtonIndex = (template) => findButtonIndex(template, (b) => b.type === "URL" && b.hasDynamicUrl);
+
+const templateHasDynamicUrlButton = (template) => findDynamicUrlButtonIndex(template) !== -1;
+
+const buildUrlButtonComponent = (urlValue, index) => {
+  if (!urlValue || index == null || index < 0) return null;
+  return {
+    type: "button",
+    sub_type: "url",
+    index: String(index),
+    parameters: [{ type: "text", text: urlValue }],
+  };
+};
+
+const MEDIA_HEADER_FORMATS = ["IMAGE", "VIDEO", "DOCUMENT"];
+
+const templateNeedsHeaderMedia = (template) => MEDIA_HEADER_FORMATS.includes(template?.headerFormat);
+
+const buildTemplateHeaderComponent = (headerFormat, mediaUrl) => {
+  if (!MEDIA_HEADER_FORMATS.includes(headerFormat) || !mediaUrl) return null;
+  const key = headerFormat.toLowerCase();
+  return {
+    type: "header",
+    parameters: [{ type: key, [key]: { link: mediaUrl } }],
+  };
+};
+
 module.exports = {
   MAX_CAMPAIGN_RECIPIENTS,
   buildCampaignDedupeWhere,
@@ -97,4 +144,12 @@ module.exports = {
   resolveTemplateVariableValue,
   validateVariableMappings,
   buildTemplateBodyComponents,
+  templateHasCopyCodeButton,
+  buildCouponCodeButtonComponent,
+  findCopyCodeButtonIndex,
+  findDynamicUrlButtonIndex,
+  templateHasDynamicUrlButton,
+  buildUrlButtonComponent,
+  templateNeedsHeaderMedia,
+  buildTemplateHeaderComponent,
 };
