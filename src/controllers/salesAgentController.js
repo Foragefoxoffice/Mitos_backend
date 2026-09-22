@@ -8,6 +8,7 @@ const { fetchApprovedTemplates } = require("../utils/whatsappTemplates");
 const { buildUserSearchWhere } = require("../utils/salesRecipientSearch");
 const { buildRecipientCandidateWhere } = require("../utils/salesRecipientCandidates");
 const { sendInBatches } = require("../utils/batch");
+const { splitReplyIntoMessages, typingDelayForChunk } = require("../utils/salesReplyChunking");
 const {
   MAX_CAMPAIGN_RECIPIENTS,
   buildCampaignDedupeWhere,
@@ -567,6 +568,43 @@ const sendTextMessage = async ({ to, text }) => {
   };
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Sends one AI reply as WhatsApp would if a person were typing it: shows
+// the "typing…" indicator against the customer's inbound message first
+// (best-effort — never allowed to block the actual reply), then sends each
+// paragraph as its own message with a short human-ish pause in between,
+// instead of dumping the whole reply as one message the instant it's
+// ready. Each bubble is stored as its own `whatsappmessage` row.
+const sendReplyAsChunkedMessages = async ({ to, conversationId, replyText, incomingMessageId }) => {
+  if (incomingMessageId) {
+    try {
+      await sendWhatsappOTP.markReadWithTypingIndicator({ messageId: incomingMessageId });
+    } catch (error) {
+      console.error("[salesAgentController] markReadWithTypingIndicator failed (non-fatal):", error);
+    }
+  }
+
+  const chunks = splitReplyIntoMessages(replyText);
+  const sent = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await sleep(typingDelayForChunk(chunks[i]));
+    const result = await sendTextMessage({ to, text: chunks[i] });
+    await createSalesMessage({
+      conversationId,
+      waMessageId: result.messageId,
+      direction: "OUTBOUND",
+      senderRole: "AGENT",
+      messageType: "text",
+      status: "accepted",
+      text: chunks[i],
+      rawPayload: result.providerResponse,
+    });
+    sent.push(result);
+  }
+  return sent;
+};
+
 const sendTemplateMessage = async ({ to, templateName, languageCode, components }) => {
   const response = await sendWhatsappOTP.sendWhatsappTemplate({
     to,
@@ -682,16 +720,10 @@ const sendOwnerTestMessage = async (req, res) => {
         });
       }
 
-      const sent = await sendTextMessage({ to: config.ownerPhone, text: cleanReply });
-      await createSalesMessage({
+      const sentMessages = await sendReplyAsChunkedMessages({
+        to: config.ownerPhone,
         conversationId: conversation?.id,
-        waMessageId: sent.messageId,
-        direction: "OUTBOUND",
-        senderRole: "AGENT",
-        messageType: "text",
-        status: "accepted",
-        text: cleanReply,
-        rawPayload: sent.providerResponse,
+        replyText: cleanReply,
       });
       await touchConversation(conversation?.id, {
         lastMessageAt: new Date(),
@@ -708,7 +740,7 @@ const sendOwnerTestMessage = async (req, res) => {
         needsHuman,
         provider: aiReply.provider,
         model: aiReply.model,
-        messageId: sent.messageId,
+        messageIds: sentMessages.map((s) => s.messageId),
       });
     }
 
@@ -928,16 +960,11 @@ const handleInboundMessage = async (message, value) => {
     },
   });
 
-  const sent = await sendTextMessage({ to: from, text: cleanReply });
-  await createSalesMessage({
+  await sendReplyAsChunkedMessages({
+    to: from,
     conversationId: conversation?.id,
-    waMessageId: sent.messageId,
-    direction: "OUTBOUND",
-    senderRole: "AGENT",
-    messageType: "text",
-    status: "accepted",
-    text: cleanReply,
-    rawPayload: sent.providerResponse,
+    replyText: cleanReply,
+    incomingMessageId: message.id,
   });
   await touchConversation(conversation?.id, {
     lastMessageAt: new Date(),
@@ -954,29 +981,41 @@ const handleInboundMessage = async (message, value) => {
   return { ignored: false };
 };
 
+// Acks Meta immediately, then processes messages in the background. This
+// used to await the full pipeline (AI call + send) before responding —
+// fine when a reply was one instant send, but the chunked/typing-delay
+// send above can legitimately take several seconds for a multi-part
+// reply, and holding the webhook response open that long risks Meta's own
+// timeout retrying the same delivery on top of ours. Failures are now
+// logged rather than surfaced as a 500 (Meta can no longer retry off the
+// back of an HTTP error since we've already responded 200) — safe because
+// every write in this pipeline already tolerates a duplicate delivery via
+// `findExistingMessageByWaId`, so a real client-side retry (WhatsApp's own
+// redelivery) still resolves correctly, just without an extra Meta-side
+// nudge for genuinely transient failures.
 const handleWebhook = async (req, res) => {
-  try {
-    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+  const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+  res.json({ received: true });
 
-    for (const entry of entries) {
-      const changes = Array.isArray(entry.changes) ? entry.changes : [];
-      for (const change of changes) {
-        const value = change.value || {};
-        for (const status of value.statuses || []) {
+  for (const entry of entries) {
+    const changes = Array.isArray(entry.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = change.value || {};
+      for (const status of value.statuses || []) {
+        try {
           await handleStatusUpdate(status);
+        } catch (error) {
+          console.error("[salesAgentController] handleStatusUpdate failed (webhook already acked):", error.response?.data || error);
         }
-        for (const message of value.messages || []) {
+      }
+      for (const message of value.messages || []) {
+        try {
           await handleInboundMessage(message, value);
+        } catch (error) {
+          console.error("[salesAgentController] handleInboundMessage failed (webhook already acked):", error.response?.data || error);
         }
       }
     }
-
-    res.json({ received: true });
-  } catch (error) {
-    console.error("[salesAgentController] webhook failed:", error.response?.data || error);
-    res.status(500).json({
-      message: buildErrorMessage(error, "Failed to process WhatsApp webhook"),
-    });
   }
 };
 

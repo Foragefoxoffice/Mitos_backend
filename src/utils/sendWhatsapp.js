@@ -99,9 +99,23 @@ const sendWhatsappText = async ({ to, text, previewUrl = false }) =>
     },
   });
 
+// Marks the customer's inbound message as read (blue ticks) AND shows the
+// "typing…" indicator in their chat — Meta's Cloud API ties the two
+// together in one call. The indicator clears itself as soon as we send our
+// next message, or after ~25s, whichever comes first — no separate "stop
+// typing" call exists or is needed.
+const markReadWithTypingIndicator = async ({ messageId }) =>
+  postMessage({
+    messaging_product: "whatsapp",
+    status: "read",
+    message_id: messageId,
+    typing_indicator: { type: "text" },
+  });
+
 sendWhatsappOTP.sendWhatsappOTP = sendWhatsappOTP;
 sendWhatsappOTP.sendWhatsappTemplate = sendWhatsappTemplate;
 sendWhatsappOTP.sendWhatsappText = sendWhatsappText;
+sendWhatsappOTP.markReadWithTypingIndicator = markReadWithTypingIndicator;
 sendWhatsappOTP.normalizePhone = normalizePhone;
 sendWhatsappOTP.isWhatsappConfigured = () => !!(WHATSAPP_TOKEN && WHATSAPP_PHONE_NUMBER_ID);
 
