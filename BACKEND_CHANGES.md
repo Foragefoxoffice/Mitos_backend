@@ -2,6 +2,10 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-09-22 (3)
+
+- `src/utils/salesCampaignHelpers.js` (+ `.test.js`) — User pointed out `weakestChapter` alone undersold what Mark Booster actually tracks. Expanded `VARIABLE_FIELD_OPTIONS`/`resolveTemplateVariableValue` to the full `useranalyticssummary` set, matching the field names and `formatPercent`-style rounding (`Math.round(value)}%`, accuracy already stored 0-100) already established for the push-notification broadcast's own `{{weakChapterAccuracy}}`-style variables in `notificationController.js` — same data, same convention, second surface. New fields: `weakestSubject`/`weakestSubjectAccuracy`, `weakestChapterAccuracy` (chapter name itself already existed), `weakestTopic`/`weakestTopicAccuracy`, `overallAccuracy`, `lastScore`, `lastAccuracy`, `totalTestsTaken`. No admin/frontend change needed — `GET /admin/variable-field-options` returns `VARIABLE_FIELD_OPTIONS` directly, so the campaign-builder dropdown already reflects this.
+
 ## 2026-09-22 (2)
 
 - `prisma/migrations/` — Ran `prisma migrate deploy` against production (user confirmed). Applied **two** pending migrations, not just today's: `20260922000000_add_conversation_needs_human` (today's) and, discovered only via `prisma migrate status` at deploy time, `20260917000000_add_personal_coupon_assignment` — written five days ago but never actually applied. That means the personal-coupon-assignment table has not existed in prod since it was coded; `fetchPersonalCoupon` has been silently returning `null` for every user this whole time via its `isMissingSalesTableError` fallback (no crash, just a dead feature) rather than ever returning a real iOS personal coupon. User confirmed applying both (additive-only, no data-loss risk) rather than leaving the older one stuck. `npx prisma generate` re-run locally afterward. **Still needs applying on the actual prod app server too** if its Prisma Client is generated separately from a `git pull` there (this session only ran it against the DB directly from local, since local `.env` already points at the same production MySQL host).

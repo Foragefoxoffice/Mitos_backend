@@ -29,7 +29,16 @@ const VARIABLE_FIELD_OPTIONS = [
   { value: "trialStartedAt", label: "Trial start date" },
   { value: "trialEndsAt", label: "Trial end date" },
   { value: "premiumExpiry", label: "Premium expiry date" },
+  { value: "weakestSubject", label: "Mark Booster — weakest subject" },
+  { value: "weakestSubjectAccuracy", label: "Mark Booster — weakest subject accuracy" },
   { value: "weakestChapter", label: "Mark Booster — weakest chapter" },
+  { value: "weakestChapterAccuracy", label: "Mark Booster — weakest chapter accuracy" },
+  { value: "weakestTopic", label: "Mark Booster — weakest topic" },
+  { value: "weakestTopicAccuracy", label: "Mark Booster — weakest topic accuracy" },
+  { value: "overallAccuracy", label: "Mark Booster — overall accuracy" },
+  { value: "lastScore", label: "Mark Booster — last test score" },
+  { value: "lastAccuracy", label: "Mark Booster — last test accuracy" },
+  { value: "totalTestsTaken", label: "Mark Booster — total tests taken" },
   { value: "currentDate", label: "Today's date" },
   { value: "custom", label: "Fixed text for everyone" },
 ];
@@ -47,7 +56,13 @@ const formatDateValue = (value) => {
   return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 };
 
+// Same rounding convention as the push-notification broadcast's analytics
+// variables (notificationController.js's formatPercent) — accuracy is
+// already stored 0-100, not a 0-1 fraction.
+const formatPercent = (value) => (value == null ? null : `${Math.round(value)}%`);
+
 const resolveTemplateVariableValue = ({ field, customValue, userRecord, now = new Date() }) => {
+  const summary = userRecord?.useranalyticssummary;
   if (field === "className") {
     const raw = userRecord?.className;
     return raw ? CLASS_LABELS[raw] || raw : null;
@@ -56,7 +71,16 @@ const resolveTemplateVariableValue = ({ field, customValue, userRecord, now = ne
   if (field === "trialStartedAt") return formatDateValue(userRecord?.trialStartedAt);
   if (field === "trialEndsAt") return formatDateValue(userRecord?.trialEndsAt);
   if (field === "premiumExpiry") return formatDateValue(userRecord?.premiumExpiry);
-  if (field === "weakestChapter") return userRecord?.useranalyticssummary?.weakestChapter || null;
+  if (field === "weakestSubject") return summary?.weakestSubject || null;
+  if (field === "weakestSubjectAccuracy") return formatPercent(summary?.weakestSubjectAccuracy);
+  if (field === "weakestChapter") return summary?.weakestChapter || null;
+  if (field === "weakestChapterAccuracy") return formatPercent(summary?.weakestChapterAccuracy);
+  if (field === "weakestTopic") return summary?.weakestTopic || null;
+  if (field === "weakestTopicAccuracy") return formatPercent(summary?.weakestTopicAccuracy);
+  if (field === "overallAccuracy") return formatPercent(summary?.overallAccuracy);
+  if (field === "lastScore") return summary?.lastScore != null ? String(summary.lastScore) : null;
+  if (field === "lastAccuracy") return formatPercent(summary?.lastAccuracy);
+  if (field === "totalTestsTaken") return summary?.totalTestsTaken != null ? String(summary.totalTestsTaken) : null;
   if (field === "currentDate") return formatDateValue(now);
   if (field === "custom") return customValue || null;
   return userRecord?.name || null;

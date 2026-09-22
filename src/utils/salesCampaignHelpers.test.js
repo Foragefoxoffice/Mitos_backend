@@ -114,17 +114,58 @@ describe('resolveTemplateVariableValue', () => {
     expect(resolveTemplateVariableValue({ field: 'premiumExpiry', userRecord })).toBe('11 Sep 2027');
   });
 
-  it('returns the Mark Booster weakest chapter from the linked analytics summary', () => {
-    expect(
-      resolveTemplateVariableValue({
-        field: 'weakestChapter',
-        userRecord: { useranalyticssummary: { weakestChapter: 'Human Physiology' } },
-      })
-    ).toBe('Human Physiology');
+  it('reads the Mark Booster text fields from the linked analytics summary', () => {
+    const userRecord = {
+      useranalyticssummary: {
+        weakestSubject: 'Botany',
+        weakestChapter: 'Human Physiology',
+        weakestTopic: 'Excretory System',
+      },
+    };
+    expect(resolveTemplateVariableValue({ field: 'weakestSubject', userRecord })).toBe('Botany');
+    expect(resolveTemplateVariableValue({ field: 'weakestChapter', userRecord })).toBe('Human Physiology');
+    expect(resolveTemplateVariableValue({ field: 'weakestTopic', userRecord })).toBe('Excretory System');
   });
 
-  it('returns null for weakestChapter when no analytics summary exists', () => {
-    expect(resolveTemplateVariableValue({ field: 'weakestChapter', userRecord: {} })).toBeNull();
+  it('rounds the Mark Booster accuracy fields to a whole-number percentage', () => {
+    const userRecord = {
+      useranalyticssummary: {
+        weakestSubjectAccuracy: 41.6,
+        weakestChapterAccuracy: 38.2,
+        weakestTopicAccuracy: 29.9,
+        overallAccuracy: 62.5,
+        lastAccuracy: 70.4,
+      },
+    };
+    expect(resolveTemplateVariableValue({ field: 'weakestSubjectAccuracy', userRecord })).toBe('42%');
+    expect(resolveTemplateVariableValue({ field: 'weakestChapterAccuracy', userRecord })).toBe('38%');
+    expect(resolveTemplateVariableValue({ field: 'weakestTopicAccuracy', userRecord })).toBe('30%');
+    expect(resolveTemplateVariableValue({ field: 'overallAccuracy', userRecord })).toBe('63%');
+    expect(resolveTemplateVariableValue({ field: 'lastAccuracy', userRecord })).toBe('70%');
+  });
+
+  it('reads lastScore and totalTestsTaken as strings', () => {
+    const userRecord = { useranalyticssummary: { lastScore: 142, totalTestsTaken: 7 } };
+    expect(resolveTemplateVariableValue({ field: 'lastScore', userRecord })).toBe('142');
+    expect(resolveTemplateVariableValue({ field: 'totalTestsTaken', userRecord })).toBe('7');
+  });
+
+  it('returns null for every Mark Booster field when no analytics summary exists', () => {
+    const fields = [
+      'weakestSubject',
+      'weakestSubjectAccuracy',
+      'weakestChapter',
+      'weakestChapterAccuracy',
+      'weakestTopic',
+      'weakestTopicAccuracy',
+      'overallAccuracy',
+      'lastScore',
+      'lastAccuracy',
+      'totalTestsTaken',
+    ];
+    for (const field of fields) {
+      expect(resolveTemplateVariableValue({ field, userRecord: {} })).toBeNull();
+    }
   });
 
   it('formats currentDate using the provided now', () => {
