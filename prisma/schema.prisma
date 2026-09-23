@@ -228,6 +228,7 @@ model user {
   tsPurchases           testseriespurchase[]
   tsBundlePurchases     testseriesbundlepurchase[]
   tsResults             testseriesresult[]
+  checkoutOrders        checkoutorder[]
 
   @@index([status]) // filter PREMIUM / TRIALED users
   @@index([role]) // admin vs user queries
@@ -915,4 +916,33 @@ model appsetting {
   key       String   @unique
   value     String   @db.Text
   updatedAt DateTime @updatedAt
+}
+
+/// Public/guest checkout orders (see docs/superpowers/plans/2026-09-23-public-guest-checkout.md).
+/// One row per Razorpay order created via the public checkout API; fulfilment
+/// (grants + the single `payment` row) is idempotent, driven off `fulfilledAt`.
+model checkoutorder {
+  id                Int       @id @default(autoincrement())
+  razorpayOrderId   String    @unique @db.VarChar(64)
+  source            String    @default("WEB_GUEST") @db.VarChar(16) // WEB_GUEST | WEB_AUTH
+  userId            Int?
+  guestPhone        String    @db.VarChar(20)
+  guestEmail        String?   @db.VarChar(255)
+  items             Json // resolved cart lines snapshot
+  originalAmount    Float
+  discountAmount    Float     @default(0)
+  finalAmount       Float
+  couponId          Int?
+  status            String    @default("PENDING") @db.VarChar(16) // PENDING | PAID | FULFILLED | FAILED
+  razorpayPaymentId String?   @db.VarChar(64)
+  fulfilledAt       DateTime?
+  fulfilledBy       String?   @db.VarChar(16) // VERIFY | WEBHOOK | ADMIN
+  lastError         String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              user?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([guestPhone])
+  @@index([status])
+  @@index([userId])
 }

@@ -1,6 +1,7 @@
 const prisma = require("../utils/prisma");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const grants = require("../services/purchaseGrants");
 
 
 
@@ -107,32 +108,14 @@ exports.verifyTSPayment = async (req, res) => {
     const order = await prisma.testseriesorder.findFirst({ where: { razorpayOrderId: orderId } });
     const amount = order?.amount ?? 0;
 
-    await prisma.testseriespurchase.upsert({
-      where: { userId_packageId: { userId, packageId: Number(packageId) } },
-      create: {
-        userId,
-        packageId: Number(packageId),
-        razorpayOrderId: orderId,
-        paymentId,
-        amount,
-        purchaseType,
-        shippingName: shippingDetails?.name ?? null,
-        shippingPhone: shippingDetails?.phone ?? null,
-        shippingAddress: shippingDetails?.address ?? null,
-        shippingCity: shippingDetails?.city ?? null,
-        shippingPincode: shippingDetails?.pincode ?? null,
-      },
-      update: {
-        paymentId,
-        razorpayOrderId: orderId,
-        purchaseType,
-        amount,
-        shippingName: shippingDetails?.name ?? null,
-        shippingPhone: shippingDetails?.phone ?? null,
-        shippingAddress: shippingDetails?.address ?? null,
-        shippingCity: shippingDetails?.city ?? null,
-        shippingPincode: shippingDetails?.pincode ?? null,
-      },
+    await grants.grantPackage(prisma, {
+      userId,
+      packageId: Number(packageId),
+      orderId,
+      paymentId,
+      amount,
+      purchaseType,
+      shippingDetails,
     });
 
     // Record in payments table so it appears in admin panel
@@ -141,19 +124,12 @@ exports.verifyTSPayment = async (req, res) => {
         where: { id: Number(packageId) },
         select: { title: true },
       });
-      await prisma.payment.create({
-        data: {
-          userId,
-          amount,
-          currency: "INR",
-          paymentMethod: "ONLINE",
-          paymentStatus: "COMPLETED",
-          transactionId: paymentId,
-          subscriptionType: pkg?.title ?? `TEST_SERIES_${packageId}`,
-          paymentGateway: "Razorpay",
-          gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
-          updatedAt: new Date(),
-        },
+      await grants.recordPayment(prisma, {
+        userId,
+        amount,
+        transactionId: paymentId,
+        subscriptionType: pkg?.title ?? `TEST_SERIES_${packageId}`,
+        gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
       });
     } catch (payErr) {
       if (payErr.code !== "P2002") console.error("TS payment record error:", payErr.message);
@@ -310,48 +286,23 @@ exports.verifyBundlePayment = async (req, res) => {
       ? (bundleOrder?.physicalPrice ?? 0)
       : (bundleOrder?.price ?? 0);
 
-    await prisma.testseriesbundlepurchase.upsert({
-      where: { userId },
-      create: {
-        userId,
-        razorpayOrderId: orderId,
-        paymentId,
-        amount,
-        purchaseType,
-        shippingName: shippingDetails?.name ?? null,
-        shippingPhone: shippingDetails?.phone ?? null,
-        shippingAddress: shippingDetails?.address ?? null,
-        shippingCity: shippingDetails?.city ?? null,
-        shippingPincode: shippingDetails?.pincode ?? null,
-      },
-      update: {
-        paymentId,
-        razorpayOrderId: orderId,
-        purchaseType,
-        amount,
-        shippingName: shippingDetails?.name ?? null,
-        shippingPhone: shippingDetails?.phone ?? null,
-        shippingAddress: shippingDetails?.address ?? null,
-        shippingCity: shippingDetails?.city ?? null,
-        shippingPincode: shippingDetails?.pincode ?? null,
-      },
+    await grants.grantBundle(prisma, {
+      userId,
+      orderId,
+      paymentId,
+      amount,
+      purchaseType,
+      shippingDetails,
     });
 
     // Record in payments table so it appears in admin panel
     try {
-      await prisma.payment.create({
-        data: {
-          userId,
-          amount,
-          currency: "INR",
-          paymentMethod: "ONLINE",
-          paymentStatus: "COMPLETED",
-          transactionId: paymentId,
-          subscriptionType: "TEST_SERIES_BUNDLE",
-          paymentGateway: "Razorpay",
-          gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
-          updatedAt: new Date(),
-        },
+      await grants.recordPayment(prisma, {
+        userId,
+        amount,
+        transactionId: paymentId,
+        subscriptionType: "TEST_SERIES_BUNDLE",
+        gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
       });
     } catch (payErr) {
       if (payErr.code !== "P2002") console.error("Bundle payment record error:", payErr.message);

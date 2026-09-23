@@ -42,6 +42,11 @@ const app = express();
 // ===============================================
 // 📌 2. MIDDLEWARE
 // ===============================================
+// Mounted BEFORE express.json() so the raw body bytes survive for
+// Razorpay webhook signature verification (HMAC over the exact payload).
+const { handleRazorpayWebhook } = require("./src/controllers/razorpayWebhookController");
+app.post("/api/public/razorpay/webhook", express.raw({ type: "application/json" }), handleRazorpayWebhook);
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -181,6 +186,7 @@ const couponRoutes = require("./src/routes/couponRoutes");
 const neetPlanRoutes = require("./src/routes/neetPlanRoutes");
 const errorBookRoutes = require("./src/routes/errorBookRoutes");
 const testSeriesRoutes = require("./src/routes/testSeriesRoutes");
+const publicCheckoutRoutes = require("./src/routes/publicCheckoutRoutes");
 const subscriptionFeatureRoutes = require("./src/routes/subscriptionFeatureRoutes");
 const aiRoutes = require("./src/routes/aiRoutes");
 const salesAgentRoutes = require("./src/routes/salesAgentRoutes");
@@ -214,6 +220,7 @@ app.use("/api/coupons", couponRoutes);
 app.use("/api/neet-plans", neetPlanRoutes);
 app.use("/api/error-book", errorBookRoutes);
 app.use("/api/test-series", testSeriesRoutes);
+app.use("/api/public/checkout", publicCheckoutRoutes);
 app.use("/api/subscription-features", subscriptionFeatureRoutes);
 app.use("/api/settings", require("./src/routes/settingRoutes"));
 app.use("/api/ai", aiRoutes);

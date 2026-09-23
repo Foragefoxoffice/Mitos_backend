@@ -6,59 +6,13 @@ const axios = require("axios");
 const razorpay = require("../utils/razorpay");
 const { getGooglePlayAccessToken } = require("../utils/googlePlayAuth");
 const { pickReceiptEntry } = require("../utils/appleReceipt");
+const grants = require("../services/purchaseGrants");
 
-/**
- * Helper to calculate expiry date based on plan code
- * @param {string} planCode 
- * @returns {Date|null}
- */
-function getNeetExpiry(planCode) {
-  if (!planCode) return null;
-  const code = planCode.toUpperCase();
-  const now = new Date();
-
-  // Monthly plan
-  if (code.includes('MONTH')) {
-    const date = new Date();
-    date.setDate(date.getDate() + 30);
-    return date;
-  }
-
-  // Yearly plans (Fixed date: June 1st)
-  if (code.includes('2025')) return new Date('2025-06-01T23:59:59Z');
-  if (code.includes('2026')) return new Date('2026-06-01T23:59:59Z');
-  if (code.includes('2027')) return new Date('2027-06-01T23:59:59Z');
-  if (code.includes('2028')) return new Date('2028-06-01T23:59:59Z');
-
-  return null;
-}
-
-/**
- * Helper to stack remaining trial days if user is currently in a trial
- * @param {number} userId 
- * @param {Date} baseExpiry The new expiry date calculated for the purchased plan
- * @returns {Promise<Date>}
- */
-async function calculateStackedExpiry(userId, baseExpiry) {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { trialEndsAt: true, status: true }
-    });
-
-    const now = new Date();
-    // Only stack if user is currently in an active trial
-    if (user && user.trialEndsAt && user.trialEndsAt > now) {
-      const remainingMs = user.trialEndsAt.getTime() - now.getTime();
-      const stackedDate = new Date(baseExpiry.getTime() + remainingMs);
-      console.log(`🎁 [STACK_EXPIRY] Adding ${Math.ceil(remainingMs / (1000 * 60 * 60 * 24))} trial days for user ${userId}.`);
-      return stackedDate;
-    }
-  } catch (err) {
-    console.error("❌ [STACK_EXPIRY] Error calculating stacked expiry:", err);
-  }
-  return baseExpiry;
-}
+// getNeetExpiry/calculateStackedExpiry moved verbatim to services/purchaseGrants.js
+// (Task 5). Kept as local names because Google/Apple verify below still call
+// them as `getNeetExpiry(code)` / `calculateStackedExpiry(userId, baseExpiry)`.
+const getNeetExpiry = grants.getNeetExpiry;
+const calculateStackedExpiry = (userId, baseExpiry) => grants.calculateStackedExpiry(prisma, userId, baseExpiry);
 
 /* ======================================================
    GET ACTIVE NEET PLANS (FOR MOBILE APP)
@@ -462,9 +416,7 @@ exports.verifyCombinedPayment = async (req, res) => {
       return res.status(400).json({ message: "Invalid signature" });
     }
 
-    let premiumExpiry = getNeetExpiry(plan);
-    if (!premiumExpiry) return res.status(400).json({ message: "Invalid plan" });
-    premiumExpiry = await calculateStackedExpiry(userId, premiumExpiry);
+    if (!getNeetExpiry(plan)) return res.status(400).json({ message: "Invalid plan" });
 
     const razorOrder = await razorpay.orders.fetch(orderId);
     const paidAmount = razorOrder.amount / 100;
@@ -478,35 +430,21 @@ exports.verifyCombinedPayment = async (req, res) => {
     const discountAmount = notes.discountAmount ? Number(notes.discountAmount) : 0;
     const originalAmount = notes.premiumAmount ? Number(notes.premiumAmount) : null;
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { status: "PREMIUM", premiumExpiry },
-    });
+    await grants.grantPremium(prisma, userId, plan);
 
-    try {
-      await prisma.payment.create({
-        data: {
-          userId,
-          amount: paidAmount,
-          currency: "INR",
-          paymentMethod: "ONLINE",
-          paymentStatus: "COMPLETED",
-          transactionId: paymentId,
-          subscriptionType: plan,
-          paymentGateway: "Razorpay",
-          gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
-          couponId,
-          discountAmount,
-          originalAmount,
-          neetPlanId,
-          neetPlanPriceId,
-          platform: "WEB",
-          updatedAt: new Date(),
-        },
-      });
-    } catch (e) {
-      if (e.code !== "P2002") throw e;
-    }
+    await grants.recordPayment(prisma, {
+      userId,
+      amount: paidAmount,
+      transactionId: paymentId,
+      subscriptionType: plan,
+      gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
+      couponId,
+      discountAmount,
+      originalAmount,
+      neetPlanId,
+      neetPlanPriceId,
+      platform: "WEB",
+    });
 
     if (includeBundle) {
       // Grant bundle access
@@ -515,16 +453,11 @@ exports.verifyCombinedPayment = async (req, res) => {
         orderBy: { createdAt: "desc" },
       });
       try {
-        await prisma.testseriesbundlepurchase.upsert({
-          where: { userId },
-          create: {
-            userId,
-            razorpayOrderId: orderId,
-            paymentId,
-            amount: bundleConfig?.price ?? 0,
-            purchaseType: "ETEST",
-          },
-          update: { paymentId, razorpayOrderId: orderId, purchaseType: "ETEST" },
+        await grants.grantBundle(prisma, {
+          userId,
+          orderId,
+          paymentId,
+          amount: bundleConfig?.price ?? 0,
         });
       } catch (e) {
         if (e.code !== "P2002") throw e;
@@ -532,17 +465,12 @@ exports.verifyCombinedPayment = async (req, res) => {
     } else {
       for (const pkgId of testPackageIds) {
         try {
-          await prisma.testseriespurchase.upsert({
-            where: { userId_packageId: { userId, packageId: Number(pkgId) } },
-            create: {
-              userId,
-              packageId: Number(pkgId),
-              razorpayOrderId: orderId,
-              paymentId,
-              amount: 0,
-              purchaseType: "ETEST",
-            },
-            update: { paymentId, razorpayOrderId: orderId, purchaseType: "ETEST" },
+          await grants.grantPackage(prisma, {
+            userId,
+            packageId: Number(pkgId),
+            orderId,
+            paymentId,
+            amount: 0,
           });
         } catch (e) {
           if (e.code !== "P2002") throw e;
@@ -581,14 +509,10 @@ exports.verifyRazorpayPayment = async (req, res) => {
       return res.status(400).json({ message: "Invalid signature" });
     }
 
-    let premiumExpiry = getNeetExpiry(plan);
-    if (!premiumExpiry) {
+    if (!getNeetExpiry(plan)) {
       console.warn(`⚠️ [VERIFY_RAZORPAY] Invalid plan: ${plan}`);
       return res.status(400).json({ message: "Invalid plan" });
     }
-
-    // Stack trial days if applicable
-    premiumExpiry = await calculateStackedExpiry(userId, premiumExpiry);
 
     const order = await razorpay.orders.fetch(orderId);
     const paidAmount = order.amount / 100;
@@ -611,38 +535,23 @@ exports.verifyRazorpayPayment = async (req, res) => {
     const discountAmount = notes.discountAmount ? Number(notes.discountAmount) : 0;
     const originalAmount = notes.originalAmount ? Number(notes.originalAmount) : null;
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { status: "PREMIUM", premiumExpiry },
-    });
+    const premiumExpiry = await grants.grantPremium(prisma, userId, plan);
 
-    try {
-      await prisma.payment.create({
-        data: {
-          userId,
-          amount: paidAmount,
-          currency: "INR",
-          paymentMethod: "ONLINE",
-          paymentStatus: "COMPLETED",
-          transactionId: paymentId,
-          subscriptionType: plan,
-          paymentGateway: "Razorpay",
-          gatewayResponse: JSON.stringify({ order, paymentId, signature }),
-          couponId,
-          discountAmount,
-          originalAmount,
-          neetPlanId,
-          neetPlanPriceId,
-          platform: "WEB",
-          updatedAt: new Date(),
-        },
-      });
-    } catch (paymentError) {
-      if (paymentError.code === 'P2002') {
-        console.log("ℹ️ [VERIFY_RAZORPAY] Duplicate payment detected. Handling gracefully.");
-      } else {
-        throw paymentError;
-      }
+    const payment = await grants.recordPayment(prisma, {
+      userId,
+      amount: paidAmount,
+      transactionId: paymentId,
+      subscriptionType: plan,
+      gatewayResponse: JSON.stringify({ order, paymentId, signature }),
+      couponId,
+      discountAmount,
+      originalAmount,
+      neetPlanId,
+      neetPlanPriceId,
+      platform: "WEB",
+    });
+    if (!payment) {
+      console.log("ℹ️ [VERIFY_RAZORPAY] Duplicate payment detected. Handling gracefully.");
     }
 
     console.log(`🎉 [VERIFY_RAZORPAY] Success for user ${userId}`);

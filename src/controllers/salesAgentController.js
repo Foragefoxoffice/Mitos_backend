@@ -296,9 +296,9 @@ const pickPrimaryPlan = (plans) => {
 };
 
 const buildSalesLinks = (config, primaryPlan) => {
-  const subscriptionUrl = `${config.appBaseUrl}/user/subscription`;
+  const subscriptionUrl = `${config.appBaseUrl}/plans`;
   const checkoutUrl = primaryPlan
-    ? `${config.appBaseUrl}/user/checkout?plan=${encodeURIComponent(primaryPlan.code)}`
+    ? `${config.appBaseUrl}/checkout?plan=${encodeURIComponent(primaryPlan.code)}`
     : null;
   return { subscriptionUrl, checkoutUrl };
 };
