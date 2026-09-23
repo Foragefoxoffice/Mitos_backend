@@ -115,12 +115,22 @@ const fetchActiveCoupons = async () => {
         isActive: true,
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
-      orderBy: { createdAt: "desc" },
-      take: 5,
+      // Ascending by discount value — the model was left to find the max
+      // itself out of a recency-ordered list and got it wrong live (stuck
+      // below a real 50% coupon, or reset to the lowest one after already
+      // offering a higher one). Sorted low-to-high, the ladder rule in the
+      // prompt ("step up one at a time, last one is the max") just walks
+      // the array in order instead of doing that comparison itself.
+      orderBy: { value: "asc" },
+      take: 10,
     });
     return coupons
       .filter((c) => !c.maxUsage || c.usedCount < c.maxUsage)
-      .map((c) => ({ code: c.code, type: c.type, value: c.value, expiresAt: c.expiresAt }));
+      // No `expiresAt` here on purpose — a real expiry date in the AI's
+      // context kept getting read out verbatim ("till 1 Oct 2026"), when a
+      // vaguer "for a limited time" is what's actually wanted. Urgency
+      // copy is handled entirely in the prompt now, not from real dates.
+      .map((c) => ({ code: c.code, type: c.type, value: c.value }));
   } catch (error) {
     if (isMissingSalesTableError(error)) return [];
     throw error;
@@ -211,7 +221,6 @@ const fetchPersonalCoupon = async ({ phoneNumber, email }) => {
       code: assignment.coupon.code,
       type: assignment.coupon.type,
       value: assignment.coupon.value,
-      expiresAt: assignment.coupon.expiresAt,
     };
   } catch (error) {
     if (isMissingSalesTableError(error)) return null;

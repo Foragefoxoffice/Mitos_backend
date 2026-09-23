@@ -2,6 +2,10 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-09-23
+
+- `src/controllers/salesAgentController.js` — `fetchActiveCoupons()` now orders by `value: "asc"` (was `createdAt: "desc"`) and `take: 10` (was 5), and both it and `fetchPersonalCoupon()` no longer include `expiresAt` in what's returned to the AI. Two real live bugs this was chasing: (1) the AI got stuck offering a 34% coupon and never found the real 50% one, or reset back down to a lower discount after already offering a higher one — root cause was the coupon list being recency-ordered, leaving the model to correctly identify "the max" and "the next rung up" itself out of an unsorted array, which it got wrong live, repeatedly; sorting the data itself removes that burden (the companion `ai-service` prompt change now treats the array as an already-sorted ladder to walk, not something to reason about). (2) the AI was reading a literal expiry date out to customers ("till 1 Oct 2026") when the ask was for vaguer urgency ("expires soon") instead — removing the real date from the context entirely is a more robust fix than a prompt instruction alone, since the temptation is gone rather than just discouraged. Verified: syntax-checked clean, all 13 Jest suites / 125 tests still pass (no test coverage change needed — these are live Prisma query/shape changes in a controller, consistent with how this file's other DB-facing functions are verified).
+
 ## 2026-09-22 (4)
 
 - New `src/utils/salesReplyChunking.js` (+ `.test.js`) — User feedback: getting the whole AI reply as one instant message "feels like robot chatting." Pure helpers: `splitReplyIntoMessages(text)` splits a reply on blank lines (the model already writes blank-line-separated paragraphs for a multi-beat reply, per `salesAgentPrompt.js`) into up to `MAX_MESSAGE_CHUNKS = 4` bubbles, folding any overflow into the last one; `typingDelayForChunk(text)` returns a length-scaled pause (500ms–2200ms, ~18ms/char) so the gap between bubbles isn't a fixed, obviously-mechanical wait.
