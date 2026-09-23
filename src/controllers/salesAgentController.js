@@ -9,6 +9,7 @@ const { buildUserSearchWhere } = require("../utils/salesRecipientSearch");
 const { buildRecipientCandidateWhere } = require("../utils/salesRecipientCandidates");
 const { sendInBatches } = require("../utils/batch");
 const { splitReplyIntoMessages, typingDelayForChunk } = require("../utils/salesReplyChunking");
+const { buildPhoneNumberLookupCandidates } = require("../utils/phoneNumberLookup");
 const {
   MAX_CAMPAIGN_RECIPIENTS,
   buildCampaignDedupeWhere,
@@ -302,10 +303,18 @@ const buildSalesLinks = (config, primaryPlan) => {
   return { subscriptionUrl, checkoutUrl };
 };
 
+const findUserByPhoneNumber = (normalizedPhone, extraArgs = {}) => {
+  const candidates = buildPhoneNumberLookupCandidates(normalizedPhone);
+  if (!candidates.length) return null;
+  return prisma.user.findFirst({
+    where: { phoneNumber: { in: candidates } },
+    ...extraArgs,
+  });
+};
+
 const buildUserSalesContext = async (phoneNumber) => {
   const config = getSalesAgentConfig();
-  const user = await prisma.user.findUnique({
-    where: { phoneNumber },
+  const user = await findUserByPhoneNumber(phoneNumber, {
     include: { useranalyticssummary: true },
   });
   const plans = await fetchActivePlans();
@@ -1259,8 +1268,7 @@ const sendCampaignToRecipient = async ({ recipient, template, campaignId, variab
         include: { useranalyticssummary: true },
       });
     } else {
-      userRecord = await prisma.user.findUnique({
-        where: { phoneNumber },
+      userRecord = await findUserByPhoneNumber(phoneNumber, {
         include: { useranalyticssummary: true },
       });
     }
