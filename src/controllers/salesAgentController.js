@@ -300,7 +300,10 @@ const buildSalesLinks = (config, primaryPlan) => {
   const checkoutUrl = primaryPlan
     ? `${config.appBaseUrl}/checkout?plan=${encodeURIComponent(primaryPlan.code)}`
     : null;
-  return { subscriptionUrl, checkoutUrl };
+  // Public store pages (2026-09-23): no login/OTP needed to buy — the
+  // customer enters their WhatsApp number at checkout.
+  const testSeriesUrl = `${config.appBaseUrl}/test-series`;
+  return { subscriptionUrl, checkoutUrl, testSeriesUrl };
 };
 
 const findUserByPhoneNumber = (normalizedPhone, extraArgs = {}) => {

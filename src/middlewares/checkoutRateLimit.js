@@ -5,31 +5,41 @@ const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 const TOO_MANY = { message: "Too many attempts. Please wait a few minutes and try again." };
 
-const firstForwardedFor = (req) => {
+// Prod nginx doesn't forward the client address (no trust proxy either), so
+// req.ip is 127.0.0.1 for EVERY visitor. Keying on it put all customers in
+// one shared bucket — after ~10 coupon tries site-wide, every coupon for
+// everyone failed with 429 (2026-09-23). Prefer the proxy headers when nginx
+// sends them; the IP limit is generous because it may still be shared.
+const clientIp = (req) => {
+  const realIp = req.headers["x-real-ip"];
+  if (realIp) return String(realIp).trim();
   const xff = req.headers["x-forwarded-for"];
-  return xff ? String(xff).split(",")[0].trim() : req.ip;
+  if (xff) return String(xff).split(",")[0].trim();
+  return req.ip;
 };
 
-// Per-IP: 20 attempts / 10 min.
+// Per-IP backstop: 100 attempts / 10 min.
 const byIp = rateLimit({
   windowMs: WINDOW_MS,
-  max: 20,
+  max: 100,
   validate: false,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: firstForwardedFor,
+  keyGenerator: clientIp,
   message: TOO_MANY,
 });
 
-// Per-phone: 10 attempts / 10 min. Falls back to IP when the phone in the
-// body doesn't normalize (so it still limits something rather than no-op).
+// Per-phone: 10 attempts / 10 min. Skipped when no valid phone is sent
+// (e.g. applying a coupon before typing the number) — falling back to the
+// shared IP here is what caused the site-wide lockout.
 const byPhone = rateLimit({
   windowMs: WINDOW_MS,
   max: 10,
   validate: false,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => normalizeCheckoutPhone(req.body?.phone) || firstForwardedFor(req),
+  keyGenerator: (req) => normalizeCheckoutPhone(req.body?.phone),
+  skip: (req) => !normalizeCheckoutPhone(req.body?.phone),
   message: TOO_MANY,
 });
 

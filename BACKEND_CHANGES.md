@@ -2,6 +2,11 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-09-23 (5)
+
+- `src/middlewares/checkoutRateLimit.js` — **Live bug: every coupon on the new public checkout failed with 429 "Too many attempts".** Prod nginx doesn't forward the client IP and there's no `trust proxy`, so `req.ip` is `127.0.0.1` for every visitor; the per-phone limiter fell back to that IP when the coupon request had no phone, putting all customers in one shared bucket of 10 tries / 10 min (confirmed: `ratelimit-remaining: 0` on a first-ever request). Now: per-phone limit is skipped when no valid phone is sent; IP key prefers `X-Real-IP` / `X-Forwarded-For`; IP backstop raised 20 → 100. **Recommended nginx fix:** `proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` in the API location block. Needs deploy + `pm2 restart mitos-backend`.
+- `src/controllers/salesAgentController.js` — `buildSalesLinks` now also returns `testSeriesUrl` (`/test-series`) for the AI; companion ai-service brain update (commit 5bee287) tells the AI to use only `links.*`, explains no-login checkout, and forbids old `/user/...` / `/pricing` links even if they appear in chat history.
+
 ## 2026-09-23 (4)
 
 - Public/guest checkout, Tasks 6, 8, 9, 10 of `docs/superpowers/plans/2026-09-23-public-guest-checkout.md` (Tasks 1-5, 7 done in the previous pass; 11-17 frontend still out of scope).
