@@ -55,4 +55,19 @@ describe('buildRecipientCandidateWhere', () => {
   it('returns null when the date filter itself is invalid', () => {
     expect(buildRecipientCandidateWhere({ filterType: 'date', field: 'bogusField', condition: 'today' })).toBeNull();
   });
+
+  it('TRIAL_ACTIVE selects TRIALED users whose trial has not ended', () => {
+    const now = new Date('2026-09-23T00:00:00Z');
+    const where = buildRecipientCandidateWhere({ filterType: 'status', status: 'TRIAL_ACTIVE', includeContacted: true, now });
+    expect(where.AND).toEqual(expect.arrayContaining([{ status: 'TRIALED' }, { trialEndsAt: { gt: now } }]));
+  });
+
+  it('TRIAL_ENDED selects non-premium users whose trial has ended', () => {
+    const now = new Date('2026-09-23T00:00:00Z');
+    const where = buildRecipientCandidateWhere({ filterType: 'status', status: 'TRIAL_ENDED', includeContacted: true, now });
+    expect(where.AND).toEqual(expect.arrayContaining([
+      { status: { in: ['TRIALED', 'REGISTERED'] } },
+      { trialEndsAt: { lte: now } },
+    ]));
+  });
 });

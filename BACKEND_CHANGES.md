@@ -2,6 +2,10 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-09-23 (6)
+
+- `src/utils/salesRecipientCandidates.js` (+ `.test.js`) — Campaign "By Status" filter gains two derived values: `TRIAL_ACTIVE` (`status TRIALED` and `trialEndsAt > now`) and `TRIAL_ENDED` (`status TRIALED|REGISTERED` and `trialEndsAt <= now`). Needed because status stays `TRIALED` after a trial expires (nothing resets it) — prod counts at time of change: 291 active, 7,530 ended. Companion admin dropdown options added in `admin/src/pages/admin/SalesAgentCampaignNew.jsx`. 2 new tests; suite passes.
+
 ## 2026-09-23 (5)
 
 - `src/middlewares/checkoutRateLimit.js` — **Live bug: every coupon on the new public checkout failed with 429 "Too many attempts".** Prod nginx doesn't forward the client IP and there's no `trust proxy`, so `req.ip` is `127.0.0.1` for every visitor; the per-phone limiter fell back to that IP when the coupon request had no phone, putting all customers in one shared bucket of 10 tries / 10 min (confirmed: `ratelimit-remaining: 0` on a first-ever request). Now: per-phone limit is skipped when no valid phone is sent; IP key prefers `X-Real-IP` / `X-Forwarded-For`; IP backstop raised 20 → 100. **Recommended nginx fix:** `proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` in the API location block. Needs deploy + `pm2 restart mitos-backend`.

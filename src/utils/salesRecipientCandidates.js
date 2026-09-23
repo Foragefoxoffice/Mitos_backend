@@ -5,7 +5,15 @@ const buildRecipientCandidateWhere = ({ filterType, status, field, condition, da
 
   if (filterType === "status") {
     if (!status) return null;
-    conditions.push({ status });
+    // A user's status stays TRIALED after the trial runs out (nothing resets
+    // it), so trial state is derived from trialEndsAt.
+    if (status === "TRIAL_ACTIVE") {
+      conditions.push({ status: "TRIALED" }, { trialEndsAt: { gt: now } });
+    } else if (status === "TRIAL_ENDED") {
+      conditions.push({ status: { in: ["TRIALED", "REGISTERED"] } }, { trialEndsAt: { lte: now } });
+    } else {
+      conditions.push({ status });
+    }
   } else if (filterType === "date") {
     const dateWhere = buildDateFilterWhere({ field, condition, days, now });
     if (!dateWhere) return null;
