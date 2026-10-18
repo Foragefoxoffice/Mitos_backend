@@ -7,6 +7,7 @@ const admin = require("../../firebase");
 const { buildAlreadyNotifiedWhere } = require("../utils/notificationDedupe");
 const { sendInBatches } = require("../utils/batch");
 const { buildDateFilterWhere } = require("../utils/dateFilter");
+const { normalizeTargetPlatform, filterUsersByPlatform } = require("../utils/notificationPlatform");
 
 // See sendInBatches' comment (utils/batch.js) — bounds how many
 // admin.messaging().send() calls are ever in flight at once, so a large
@@ -127,6 +128,15 @@ exports.sendNotification = async (req, res) => {
       });
     }
 
+    // "ALL" | "ANDROID" | "IOS" — applied on top of whichever recipient
+    // filter below. Missing = ALL, so an older admin build is unaffected.
+    const targetPlatform = normalizeTargetPlatform(req.body.platform);
+    if (!targetPlatform) {
+      return res.status(400).json({ message: "platform must be ALL, ANDROID or IOS" });
+    }
+    // Human-readable recipient filter, stored on the campaign for history.
+    let audience = "All users";
+
     let users = [];
 
     /* --------------------------------------------------
@@ -153,6 +163,7 @@ exports.sendNotification = async (req, res) => {
         where: dateWhere,
         include: { useranalyticssummary: true },
       });
+      audience = `Date: ${req.body.dateField} ${req.body.condition}${req.body.condition === 'today' ? '' : ` ${req.body.days}d`}`;
     }
 
     /* --------------------------------------------------
@@ -160,6 +171,7 @@ exports.sendNotification = async (req, res) => {
     -------------------------------------------------- */
     else if (subscriptionStatus && subscriptionStatus !== 'ALL') {
       const now = new Date();
+      audience = `Status: ${subscriptionStatus}`;
 
       if (subscriptionStatus === 'TRIAL') {
         // Active trial: TRIALED users whose trial has NOT expired yet
@@ -191,6 +203,7 @@ exports.sendNotification = async (req, res) => {
     // "By Status" with "All Statuses" selected
     else if (subscriptionStatus === 'ALL') {
       users = await prisma.user.findMany({ include: { useranalyticssummary: true } });
+      audience = "Status: All statuses";
     }
 
     /* --------------------------------------------------
@@ -203,6 +216,7 @@ exports.sendNotification = async (req, res) => {
         },
         include: { useranalyticssummary: true },
       });
+      audience = `Specific users (${userIds.length})`;
     }
 
     /* --------------------------------------------------
@@ -229,6 +243,25 @@ exports.sendNotification = async (req, res) => {
     if (users.length === 0) {
       return res.status(404).json({
         message: "No users found",
+      });
+    }
+
+    /* --------------------------------------------------
+       PLATFORM TARGETING — Android-only / iOS-only sends keep just the
+       users whose registered device (user.fcmPlatform) matches. Users
+       whose platform isn't known yet are left out of a single-platform
+       send and reported back as unknownPlatform.
+    -------------------------------------------------- */
+    const platformResult = filterUsersByPlatform(users, targetPlatform);
+    users = platformResult.users;
+    const { skippedOtherPlatform, unknownPlatform } = platformResult;
+    if (users.length === 0) {
+      return res.status(200).json({
+        message: `None of the matching users have an ${targetPlatform === 'IOS' ? 'iOS' : 'Android'} device registered — nothing to send.`,
+        totalUsers: 0,
+        platform: targetPlatform,
+        skippedOtherPlatform,
+        unknownPlatform,
       });
     }
 
@@ -295,6 +328,23 @@ exports.sendNotification = async (req, res) => {
     // response time, not just logged to the server console after the
     // response already went out.
     let noTokenCount = 0;
+    // Created up front so every notification row can point at it; delivery
+    // counts are filled in after the FCM sends finish (below).
+    const campaign = await prisma.notificationcampaign.create({
+      data: {
+        title,
+        message,
+        imageUrl: imageUrl || null,
+        deepLinkScreen: deepLinkScreen || null,
+        platform: targetPlatform,
+        audience,
+        forceResend,
+        totalUsers: users.length,
+        skippedAlreadyNotified,
+        skippedOtherPlatform,
+        sentByUserId: req.user?.id || null,
+      },
+    });
     const fcmJobs = []; // { userId, fcmMsg } for recipients with a token — dispatched in bounded batches below
 
     for (const user of users) {
@@ -309,6 +359,7 @@ exports.sendNotification = async (req, res) => {
         sentToAll: !!sendToAll,
         imageUrl: imageUrl || null,
         deepLinkScreen: deepLinkScreen || null,
+        campaignId: campaign.id,
         createdAt: new Date(),
       });
 
@@ -403,12 +454,21 @@ exports.sendNotification = async (req, res) => {
       });
     }
 
+    await prisma.notificationcampaign.update({
+      where: { id: campaign.id },
+      data: { delivered, noToken: noTokenCount, invalidToken, failedOther },
+    });
+
     return res.json({
       message: sendToAll
         ? "Notification sent to all users"
         : "Notification sent to selected users",
+      campaignId: campaign.id,
+      platform: targetPlatform,
       totalUsers: users.length,
       skippedAlreadyNotified,
+      skippedOtherPlatform,
+      unknownPlatform,
       delivered,
       noToken: noTokenCount,
       invalidToken,
@@ -496,3 +556,80 @@ exports.markAllNotificationsRead = async (req, res) => {
 };
 
 
+
+// GET /api/notifications/admin/campaigns?page=1&limit=20  (Admin)
+// Notification history: one entry per admin send, newest first, with the
+// delivery counts recorded at send time plus a live read count.
+exports.getNotificationCampaigns = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const platform = req.query.platform ? normalizeTargetPlatform(req.query.platform) : null;
+    const where = platform ? { platform } : {};
+
+    const [total, campaigns] = await Promise.all([
+      prisma.notificationcampaign.count({ where }),
+      prisma.notificationcampaign.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    const readCounts = campaigns.length
+      ? await prisma.notification.groupBy({
+          by: ["campaignId"],
+          where: { campaignId: { in: campaigns.map((c) => c.id) }, read: true },
+          _count: { _all: true },
+        })
+      : [];
+    const readById = new Map(readCounts.map((r) => [r.campaignId, r._count._all]));
+
+    return res.json({
+      total,
+      page,
+      limit,
+      campaigns: campaigns.map((c) => ({ ...c, readCount: readById.get(c.id) || 0 })),
+    });
+  } catch (error) {
+    console.error("Error fetching notification campaigns:", error);
+    return res.status(500).json({ message: "Error fetching notification history" });
+  }
+};
+
+// GET /api/notifications/admin/legacy?page=1&limit=20  (Admin)
+// Sends made before campaign tracking existed have no campaignId, so they're
+// regrouped here by (message, image, deep link, minute sent). Delivery
+// counts weren't stored back then — only recipient and read counts exist.
+exports.getLegacyNotificationHistory = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+    const rows = await prisma.$queryRaw`
+      SELECT MIN(id) AS id, MIN(title) AS title, MIN(message) AS message,
+             imageUrl, deepLinkScreen, MIN(createdAt) AS createdAt,
+             COUNT(*) AS totalUsers, SUM(\`read\`) AS readCount
+      FROM notification
+      WHERE campaignId IS NULL
+      GROUP BY MD5(message), imageUrl, deepLinkScreen, DATE_FORMAT(createdAt, '%Y-%m-%d %H:%i')
+      ORDER BY createdAt DESC
+      LIMIT ${limit + 1} OFFSET ${(page - 1) * limit}
+    `;
+
+    return res.json({
+      page,
+      limit,
+      hasMore: rows.length > limit,
+      items: rows.slice(0, limit).map((r) => ({
+        ...r,
+        totalUsers: Number(r.totalUsers),
+        readCount: Number(r.readCount || 0),
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching legacy notification history:", error);
+    return res.status(500).json({ message: "Error fetching notification history" });
+  }
+};

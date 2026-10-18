@@ -4,6 +4,7 @@ const prisma = require("../utils/prisma");
 
 const multer = require("multer");
 const path = require("path");
+const { detectFcmPlatform } = require("../utils/notificationPlatform");
 
 /* ------------------------- className helpers ------------------------- */
 // Convert client -> Prisma enum
@@ -350,9 +351,13 @@ const saveFcmToken = async (req, res) => {
       data: { fcmToken: null },
     });
 
+    // Only overwrite fcmPlatform when we can actually tell — an unknown
+    // result shouldn't wipe a value an earlier save already detected.
+    const fcmPlatform = detectFcmPlatform(req.body.platform, req.get("user-agent"));
+
     await prisma.user.update({
       where: { id: userId },
-      data: { fcmToken },
+      data: { fcmToken, ...(fcmPlatform ? { fcmPlatform } : {}) },
     });
 
     return res.json({ message: "FCM token saved successfully" });

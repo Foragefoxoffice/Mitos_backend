@@ -2,6 +2,21 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-10-13
+
+- **Hindi AI-keyword highlighting (proxy only).** `src/controllers/aiController.js`: `getTermsForQuestion` and `getTestSeriesTermsForQuestion` now forward `?lang=` to ai-service (with `lang=hi` each term also carries `match` — the exact Hindi text to highlight); new `getTermExplanationById` proxies `GET /internal/ai/dictionary/term-id/:id?lang=`. `src/routes/aiRoutes.js`: new `GET /api/ai/dictionary/term-id/:id` (`authenticateUser` + `requirePremium`, same gate as the by-term route, which stays for older app builds). Needs ai-service deployed with commit containing `dictionaryReadService.js` first. Not run locally: the pending `20261009000000_add_notification_platform_and_campaigns` migration isn't applied, so a local backend against prod would fail user queries — handlers tested in isolation instead.
+
+## 2026-10-09
+
+- **Android/iOS push targeting + admin notification history.**
+- `prisma/schema.prisma` + new `prisma/migrations/20261009000000_add_notification_platform_and_campaigns/migration.sql` — `user.fcmPlatform` (`"android"|"ios"`, nullable), `notification.campaignId` (+ index), new `notificationcampaign` table (one row per admin send: title/message/image/deep link, `platform` ALL|ANDROID|IOS, human-readable `audience`, delivery counts). Migration also backfills `fcmPlatform` for users with a token from `activeSessionLabel` (`Apple …`/`iOS …` → ios, any other label → android). **Written + `prisma generate` run, NOT applied** — `.env` points at prod. Needs: `npx prisma migrate deploy` → `npx prisma migrate status` → `pm2 restart mitos-backend`. Deploy the migration **before or with** this code — the new Prisma Client selects `user.fcmPlatform`, so the code without the column breaks every user query.
+- New `src/utils/notificationPlatform.js` (+ `.test.js`, 9 tests): `normalizeTargetPlatform`, `detectFcmPlatform` (explicit body `platform`, else User-Agent: `okhttp` → android, `CFNetwork`/`Darwin` → ios — covers already-installed app builds), `filterUsersByPlatform`.
+- `src/controllers/userController.js` `saveFcmToken` — stores `fcmPlatform` when detectable (never overwrites with null).
+- `src/controllers/notificationController.js` `sendNotification` — accepts `platform` (default ALL; 400 on invalid); single-platform sends keep only users whose `fcmPlatform` matches (unknown-platform users are excluded and reported as `unknownPlatform`). Creates a `notificationcampaign` row per send, links each notification row via `campaignId`, writes delivery counts back after FCM sends. Response adds `campaignId`, `platform`, `skippedOtherPlatform`, `unknownPlatform`.
+- New admin endpoints (`src/routes/notificationRoutes.js`): `GET /api/notifications/admin/campaigns?page&limit&platform` (history + live read count) and `GET /api/notifications/admin/legacy?page&limit` (pre-tracking sends regrouped by message + minute sent; recipient/read counts only).
+- Companion (uncommitted): admin `SendNotification.jsx` platform selector + new `NotificationHistory.jsx` page / sidebar group; mobile `src/utils/api.js` sends `platform: Platform.OS` with the FCM token.
+- Verification: `npx jest` 21 suites / 229 tests pass; `node --check` + route `require` clean; admin `vite build` clean. No DB-connecting command run.
+
 ## 2026-09-23 (6)
 
 - `src/utils/salesRecipientCandidates.js` (+ `.test.js`) — Campaign "By Status" filter gains two derived values: `TRIAL_ACTIVE` (`status TRIALED` and `trialEndsAt > now`) and `TRIAL_ENDED` (`status TRIALED|REGISTERED` and `trialEndsAt <= now`). Needed because status stays `TRIALED` after a trial expires (nothing resets it) — prod counts at time of change: 291 active, 7,530 ended. Companion admin dropdown options added in `admin/src/pages/admin/SalesAgentCampaignNew.jsx`. 2 new tests; suite passes.

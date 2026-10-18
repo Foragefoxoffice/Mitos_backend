@@ -207,6 +207,11 @@ model user {
   whatsappOtp           String?
   whatsappOtpExp        DateTime?
   fcmToken              String?
+  // "android" | "ios" — the OS of the device that registered fcmToken, so
+  // admin can target a push at one platform. Null = not known yet (token
+  // saved by an app build that predates this field and the User-Agent
+  // fallback in saveFcmToken couldn't tell either).
+  fcmPlatform           String?                    @db.VarChar(10)
   activeSessionId       String?                    @db.VarChar(64)
   activeSessionDeviceId String?                    @db.VarChar(64)
   activeSessionLabel    String?                    @db.VarChar(100)
@@ -345,14 +350,45 @@ model notification {
   // curated options in admin's Send Notification screen, or null for "no
   // deep link, just open the app".
   deepLinkScreen String?
+  // The admin send this row came from (see notificationcampaign). Null for
+  // rows sent before campaign tracking existed.
+  campaignId     Int?
   createdAt      DateTime  @default(now())
   read           Boolean   @default(false)
   readAt         DateTime?
 
   @@index([userId])
+  @@index([campaignId])
   @@index([userId, read]) // unread count query
   @@index([userId, createdAt]) // notifications sorted by date
   @@index([createdAt]) // retention cleanup job (cron/cleanupNotifications.js)
+}
+
+// One row per admin "Send Notification" click — powers the admin
+// notification history. Delivery counts are what sendNotification reported
+// at send time; read counts are computed live from notification rows.
+model notificationcampaign {
+  id                     Int      @id @default(autoincrement())
+  title                  String   @db.Text
+  message                String   @db.LongText
+  imageUrl               String?  @db.Text
+  deepLinkScreen         String?
+  // "ALL" | "ANDROID" | "IOS"
+  platform               String   @default("ALL") @db.VarChar(10)
+  // Human-readable recipient filter, e.g. "All users", "Status: PREMIUM"
+  audience               String   @db.Text
+  forceResend            Boolean  @default(false)
+  totalUsers             Int      @default(0)
+  skippedAlreadyNotified Int      @default(0)
+  skippedOtherPlatform   Int      @default(0)
+  delivered              Int      @default(0)
+  noToken                Int      @default(0)
+  invalidToken           Int      @default(0)
+  failedOther            Int      @default(0)
+  sentByUserId           Int?
+  createdAt              DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model coupon {

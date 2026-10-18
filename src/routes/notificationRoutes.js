@@ -8,6 +8,8 @@ const {
   markAllNotificationsRead,
   uploadNotifImage,
   uploadNotifImageOnly,
+  getNotificationCampaigns,
+  getLegacyNotificationHistory,
 } = require("../controllers/notificationController");
 
 // Upload image only — returns { imageUrl }
@@ -27,6 +29,10 @@ router.post(
   uploadNotifImage,
   sendNotification
 );
+
+// Admin notification history
+router.get("/admin/campaigns", authenticateUser, authorizeRole(["admin"]), getNotificationCampaigns);
+router.get("/admin/legacy", authenticateUser, authorizeRole(["admin"]), getLegacyNotificationHistory);
 
 // User fetches their notifications
 router.get("/my", authenticateUser, getUserNotifications);

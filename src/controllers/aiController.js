@@ -134,7 +134,11 @@ const retryFailedDictionaryTerms = async (req, res) => {
 const getTermsForQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
-    const response = await aiServiceClient.get(`/internal/ai/dictionary/for-question/${questionId}`);
+    // lang (e.g. "hi") adds each keyword's exact text in the translated
+    // question for in-text highlighting — see ai-service dictionaryReadService.js.
+    const response = await aiServiceClient.get(`/internal/ai/dictionary/for-question/${questionId}`, {
+      params: { lang: req.query.lang },
+    });
     res.json(response.data);
   } catch (error) {
     forwardError(res, error);
@@ -145,6 +149,21 @@ const getTermExplanation = async (req, res) => {
   try {
     const term = encodeURIComponent(req.params.term);
     const response = await aiServiceClient.get(`/internal/ai/dictionary/term/${term}`);
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+// Exact entry by dictionary id (optionally translated via ?lang=hi) — the
+// app's keyword tap. Avoids the by-term lookup's wrong-subject problem for
+// shared words like "pressure".
+const getTermExplanationById = async (req, res) => {
+  try {
+    const id = encodeURIComponent(req.params.id);
+    const response = await aiServiceClient.get(`/internal/ai/dictionary/term-id/${id}`, {
+      params: { lang: req.query.lang },
+    });
     res.json(response.data);
   } catch (error) {
     forwardError(res, error);
@@ -214,7 +233,9 @@ const stopTestSeriesDictionaryAutoRun = async (req, res) => {
 const getTestSeriesTermsForQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
-    const response = await aiServiceClient.get(`/internal/ai/test-series-dictionary/for-question/${questionId}`);
+    const response = await aiServiceClient.get(`/internal/ai/test-series-dictionary/for-question/${questionId}`, {
+      params: { lang: req.query.lang },
+    });
     res.json(response.data);
   } catch (error) {
     forwardError(res, error);
@@ -490,6 +511,7 @@ module.exports = {
   getDictionaryEntries,
   getTermsForQuestion,
   getTermExplanation,
+  getTermExplanationById,
   startDictionaryAutoRun,
   stopDictionaryAutoRun,
   retryDictionaryTerm,

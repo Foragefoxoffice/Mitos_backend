@@ -21,6 +21,7 @@ router.post("/dictionary/retry-failed", verifyAdmin, ctrl.retryFailedDictionaryT
 // explanation fields), so it's safe to leave open here.
 router.get("/dictionary/for-question/:questionId", authenticateUser, ctrl.getTermsForQuestion);
 router.get("/dictionary/term/:term", authenticateUser, requirePremium, ctrl.getTermExplanation);
+router.get("/dictionary/term-id/:id", authenticateUser, requirePremium, ctrl.getTermExplanationById);
 
 // Test Series — same shape, separate job/question source (see
 // aiController.js). listEntries/retry endpoints aren't duplicated: terms
