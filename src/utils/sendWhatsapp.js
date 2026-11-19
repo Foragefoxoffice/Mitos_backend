@@ -32,41 +32,38 @@ const postMessage = async (payload) => {
   }
 };
 
+// Approved Meta "Authentication" template (copy-code button). Its body text
+// is fixed by Meta: "{{1}} is your verification code. For your security, do
+// not share this code. Expires in 10 minutes." Override via env if renamed.
+const OTP_TEMPLATE_NAME = process.env.WHATSAPP_OTP_TEMPLATE || "whatsapp_otp";
+const OTP_TEMPLATE_LANG = process.env.WHATSAPP_OTP_TEMPLATE_LANG || "en_US";
+
 /**
  * Send WhatsApp OTP
  * @param {string} phone
  * @param {string|number} otp
- * @param {object} options
- * @param {boolean} options.includeUrlButton
  */
-async function sendWhatsappOTP(phone, otp, options = {}) {
-  const formattedPhone = normalizePhone(phone);
+async function sendWhatsappOTP(phone, otp) {
   const otpText = String(otp);
-
-  const components = [
-    {
-      type: "body",
-      parameters: [{ type: "text", text: otpText }],
-    },
-  ];
-
-  if (options.includeUrlButton) {
-    components.push({
-      type: "button",
-      sub_type: "url",
-      index: "0",
-      parameters: [{ type: "text", text: otpText }],
-    });
-  }
 
   return postMessage({
     messaging_product: "whatsapp",
-    to: formattedPhone,
+    to: normalizePhone(phone),
     type: "template",
     template: {
-      name: "login_otp",
-      language: { code: "en_US" },
-      components,
+      name: OTP_TEMPLATE_NAME,
+      language: { code: OTP_TEMPLATE_LANG },
+      components: [
+        { type: "body", parameters: [{ type: "text", text: otpText }] },
+        // Authentication templates require the code again for the
+        // copy-code button, or Meta rejects the send.
+        {
+          type: "button",
+          sub_type: "url",
+          index: "0",
+          parameters: [{ type: "text", text: otpText }],
+        },
+      ],
     },
   });
 }

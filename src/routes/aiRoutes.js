@@ -47,6 +47,7 @@ router.get("/translation/progress", verifyAdmin, ctrl.getTranslationProgress);
 router.get("/translation/entries", verifyAdmin, ctrl.getTranslationEntries);
 router.get("/translation/languages", authenticateUser, ctrl.getTranslationLanguages);
 router.get("/translation/for-question/:questionId", authenticateUser, ctrl.getQuestionTranslation);
+router.get("/translation/for-questions", authenticateUser, ctrl.getQuestionTranslations);
 
 // Student-facing: per-question AI chat. Writes user-attributed data and
 // has a daily cap to enforce (see CHAT_DAILY_MESSAGE_CAP in ai-service).

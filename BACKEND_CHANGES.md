@@ -2,6 +2,39 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-11-18
+
+- **Batch question-translation read** (stops the English→Hindi flicker on every question). `src/controllers/aiController.js` `getQuestionTranslations` + `src/routes/aiRoutes.js` `GET /api/ai/translation/for-questions?ids=1,2,3&source=practice|test_series&lang=hi` (authenticateUser) → proxies ai-service's new `GET /internal/ai/translation/for-questions` (max 300 ids) → `{ translations: { [questionId]: row } }`. Needs **ai-service deployed too**; until then the app falls back to parallel single-question fetches.
+- **Practice topic completion (✅ per student + all-users "N students completed").**
+- `prisma/schema.prisma` + new `prisma/migrations/20261118000000_add_user_topic_completion/migration.sql` — new `usertopiccompletion` table (`userId`+`topicId` unique, `bestAccuracy` 0-100, `completedAt`, `updatedAt`; cascades with user/topic; index on `topicId` for counts). SQL is exactly the `prisma migrate diff` output for this table (the diff also showed an old unrelated `checkoutorder.updatedAt` default drift — deliberately left out). **NOT applied to prod yet** — needs user go-ahead, then `npx prisma migrate deploy` + `prisma generate`.
+- New `src/utils/topicCompletion.js` (+ `.test.js`, 8 tests): rule = a session completes a topic only if it covered ≥90% of the topic's current questions (the "Full" set; slack only for questions added mid-session — a 10/20-Q session never counts); `accuracyPercent`.
+- New `src/controllers/topicProgressController.js` + `src/routes/topicProgressRoutes.js`, mounted at `/api/topic-progress` in `server.js` (both `authenticateUser`):
+  - `POST /complete` `{ topicIds, questionIds, correct, answered }` → verifies coverage server-side against the DB, creates rows for newly completed topics (createMany skipDuplicates), raises `bestAccuracy` on repeats → `{ completedTopicIds }`.
+  - `GET /chapter/:chapterId` → `{ completedTopicIds (this user), counts: { topicId: n } }`; counts cached in memory 10 min per chapter, cleared for a chapter when someone newly completes one of its topics.
+- Companion (uncommitted): app `PracticeScreen.jsx` reports completion on Finish (topic + Full Chapter practice only; not question-type/analytics practice), `PracticeTopics.jsx` shows ✅ Completed + "N students completed" (hidden below 10 → "Be the first to complete"), `api.js` helpers.
+- **WhatsApp OTP switched to the new Meta Authentication template `whatsapp_otp`** (copy-code button; body fixed by Meta: "{{1}} is your verification code… Expires in 10 minutes.").
+- `src/utils/sendWhatsapp.js` `sendWhatsappOTP(phone, otp)` — template name/lang now `WHATSAPP_OTP_TEMPLATE` / `WHATSAPP_OTP_TEMPLATE_LANG` env (default `whatsapp_otp` / `en_US`, was hard-coded `login_otp`). Always sends the body param **and** the copy-code button param (`sub_type: url`, index 0) — Meta rejects auth-template sends without it. Dropped the `includeUrlButton` option.
+- `src/controllers/authController.js` WhatsApp send-OTP: caller simplified; OTP expiry 5 → 10 min to match the template's "Expires in 10 minutes".
+- Deploy only after Meta approves `whatsapp_otp` — until then sends will fail with template-not-found (#132001).
+- **"You're now logged in" WhatsApp message after OTP login** (Meta template `after_otp`, no variables). New `src/services/loginNotification.js` `notifyOtpLogin(phone)` (+ `.test.js`, 5 tests) — fire-and-forget, never throws, skips users without a phone. Called (not awaited) from `verifyWhatsappOtp` and `verifyEmailOtp` right before the success response, so it fires on first sign-up and every later OTP re-login; not on 409 conflict / `requiresRegistration` / errors, and not for the store-review dummy accounts. **Off until env `WHATSAPP_LOGIN_TEMPLATE=after_otp` is set** on the server (optional `WHATSAPP_LOGIN_TEMPLATE_LANG`, default `en_US`) — set it only after Meta approves the template.
+
+## 2026-11-15
+
+- **Test series: separate Material video + Explanation video per test.**
+- `prisma/schema.prisma` + new `prisma/migrations/20261115000000_add_testseriestest_material_video/migration.sql` — `testseriestest.materialVideoUrl` (nullable VARCHAR(191)); existing `videoUrl` stays as the Explanation video. **Applied to prod DB 2026-11-15** via `npx prisma migrate deploy` (user-approved); `migrate status` up to date, column reads fine. Backend code can now be deployed (`pm2 restart mitos-backend`).
+- `src/controllers/testSeriesController.js` `createTest` / `updateTest` accept `materialVideoUrl`. **Bug fix:** `updateTest` used `videoUrl ?? undefined`, so clearing the video field in admin (sends `null`) silently kept the old URL; both video fields now treat `undefined` = unchanged, `null`/`""` = clear.
+- Companion (uncommitted): admin `TestSeriesTestFormPage.jsx` "Material Video URL" field + relabelled "Explanation Video URL"; app `TestSeriesTestsScreen.jsx` "Watch Material Video" row on unlocked test cards (incl. Coming Soon), post-attempt button renamed "Video" → "Explanation".
+
+## 2026-11-14
+
+- **Topic explanation videos (YouTube link, one per topic) — admin + DB.**
+- `prisma/schema.prisma` + new `prisma/migrations/20261114000000_add_topic_video/migration.sql` — new `topicvideo` table (`topicId` unique → cascade-deletes with the topic, `title`, normalized `youtubeUrl`, parsed `youtubeId`, `isPremium` default true, timestamps); `topic.video` back-relation. SQL matches `prisma migrate diff` output exactly. **Applied to prod DB 2026-11-14** via `npx prisma migrate deploy` (user-approved); `migrate status` reports up to date, `topicvideo.count()` = 0. The 20261009 notification migration was already applied. Backend code still needs deploying to the server + `pm2 restart mitos-backend` for `/api/topic-videos` to exist.
+- New `src/utils/youtube.js` (+ `.test.js`, 21 tests): `parseYoutubeId` (watch?v=, youtu.be, /embed, /shorts, /live, /v, nocookie, bare ID; rejects non-YouTube hosts like `youtube.com.evil.com`), `youtubeWatchUrl`, `youtubeThumbnailUrl`.
+- New `src/controllers/topicVideoController.js` + `src/routes/topicVideoRoutes.js`, mounted at `/api/topic-videos` in `server.js`:
+  - Admin (`authenticateUser` + admin role): `POST /` (upsert by topicId — replaces the topic's existing video; title defaults to topic name), `GET /admin?subjectId&chapterId`, `PATCH /:id` (title / youtubeUrl / isPremium), `DELETE /:id`.
+  - App (`authenticateUser`): `GET /topic/:topicId` → `{ video | null }`, `GET /chapter/:chapterId` → videos for the chapter's topics. Responses include `thumbnailUrl`. Premium gating is NOT enforced server-side yet (`isPremium` is returned for the app to gate, same as pdf).
+- Companion (uncommitted): admin `TopicVideos.jsx` (list/filter/edit/premium toggle/delete), `AddTopicVideo.jsx` (portion→subject→chapter→topic, live YouTube preview, warns before replacing), `src/utils/youtube.js`, api helpers, sidebar group "Topic Videos". App side not started.
+
 ## 2026-10-13
 
 - **Hindi AI-keyword highlighting (proxy only).** `src/controllers/aiController.js`: `getTermsForQuestion` and `getTestSeriesTermsForQuestion` now forward `?lang=` to ai-service (with `lang=hi` each term also carries `match` — the exact Hindi text to highlight); new `getTermExplanationById` proxies `GET /internal/ai/dictionary/term-id/:id?lang=`. `src/routes/aiRoutes.js`: new `GET /api/ai/dictionary/term-id/:id` (`authenticateUser` + `requirePremium`, same gate as the by-term route, which stays for older app builds). Needs ai-service deployed with commit containing `dictionaryReadService.js` first. Not run locally: the pending `20261009000000_add_notification_platform_and_campaigns` migration isn't applied, so a local backend against prod would fail user queries — handlers tested in isolation instead.

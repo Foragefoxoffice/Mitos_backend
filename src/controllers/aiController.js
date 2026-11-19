@@ -300,6 +300,18 @@ const getQuestionTranslation = async (req, res) => {
   }
 };
 
+// Batch: ?ids=1,2,3&source=&lang= -> { translations: { [id]: translation } }
+const getQuestionTranslations = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get(`/internal/ai/translation/for-questions`, {
+      params: { ids: req.query.ids, source: req.query.source, lang: req.query.lang },
+    });
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
 // Home screen's "Ask Mitos AI" card has no question in view — builds the
 // student's own Mark Booster/Score Predictor/Leaderboard data instead, so
 // ai-service's general-mode prompt (chatPrompt.js's buildGeneralSystemPrompt)
@@ -526,6 +538,7 @@ module.exports = {
   getTranslationEntries,
   getTranslationLanguages,
   getQuestionTranslation,
+  getQuestionTranslations,
   sendChatMessage,
   getChatHistory,
   getChatQuota,

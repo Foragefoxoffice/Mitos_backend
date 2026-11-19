@@ -10,6 +10,7 @@ const sendEmail = require("../utils/sendEmail");
 const welcomeEmail = require("../templates/welcomeEmail");
 const emailOtpTemplate = require("../templates/emailOtp");
 const sendWhatsappOTP = require("../utils/sendWhatsapp");
+const { notifyOtpLogin } = require("../services/loginNotification");
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -254,7 +255,7 @@ const sendWhatsappOtp = async (req, res) => {
     }
 
     const otp = generateOtp();
-    const expiry = new Date(Date.now() + 5 * 60 * 1000);
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // matches "Expires in 10 minutes" in the whatsapp_otp template
 
     let user = await prisma.user.findUnique({ where: { phoneNumber } });
 
@@ -269,9 +270,7 @@ const sendWhatsappOtp = async (req, res) => {
       data: { whatsappOtp: otp, whatsappOtpExp: expiry },
     });
 
-    await sendWhatsappOTP(phoneNumber, otp, {
-      includeUrlButton: true, // 🔥 IMPORTANT
-    });
+    await sendWhatsappOTP(phoneNumber, otp);
 
     res.json({ message: "OTP sent successfully" });
   } catch (error) {
@@ -394,6 +393,8 @@ const verifyWhatsappOtp = async (req, res) => {
         since: session.since,
       });
     }
+
+    notifyOtpLogin(finalUser.phoneNumber); // not awaited — never blocks login
 
     res.json({
       user: session.user,
@@ -547,6 +548,8 @@ const verifyEmailOtp = async (req, res) => {
         since: session.since,
       });
     }
+
+    notifyOtpLogin(finalUser.phoneNumber); // not awaited — never blocks login
 
     res.json({
       user: session.user,

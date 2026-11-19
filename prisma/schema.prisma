@@ -59,6 +59,8 @@ model topic {
   createdAt           DateTime                 @default(now())
   isPremium           Boolean                  @default(true)
   pdf                 pdf[]
+  video               topicvideo?
+  completions         usertopiccompletion[]
   questions           question[]
   chapter             chapter                  @relation("chapterTopics", fields: [chapterId], references: [id], onDelete: Cascade, map: "topic_chapterId_fkey")
   testSeriesQuestions testseriesquestionbank[]
@@ -120,6 +122,39 @@ model pdf {
   @@index([portionId], map: "Pdf_portionId_fkey")
   @@index([subjectId], map: "Pdf_subjectId_fkey")
   @@index([topicId], map: "Pdf_topicId_fkey")
+}
+
+// One YouTube explanation video per topic (re-saving a topic replaces it,
+// like pdf). youtubeId is parsed from youtubeUrl on save so clients can
+// embed/thumbnail without re-parsing.
+model topicvideo {
+  id         Int      @id @default(autoincrement())
+  topicId    Int      @unique
+  title      String
+  youtubeUrl String   @db.VarChar(500)
+  youtubeId  String   @db.VarChar(20)
+  isPremium  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  topic      topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+}
+
+// A student finished practising a whole topic ("Full" question set, reached
+// the last question). One row per user+topic — repeats only raise
+// bestAccuracy. Drives the ✅ on Practice topic rows and the all-users
+// "N students completed" count.
+model usertopiccompletion {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  topicId      Int
+  bestAccuracy Float    @default(0) // 0-100, like testresult.accuracy
+  completedAt  DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic        topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topicId])
+  @@index([topicId]) // all-users count per topic
 }
 
 model questiontype {
@@ -234,6 +269,7 @@ model user {
   tsBundlePurchases     testseriesbundlepurchase[]
   tsResults             testseriesresult[]
   checkoutOrders        checkoutorder[]
+  topicCompletions      usertopiccompletion[]
 
   @@index([status]) // filter PREMIUM / TRIALED users
   @@index([role]) // admin vs user queries
@@ -392,18 +428,18 @@ model notificationcampaign {
 }
 
 model coupon {
-  id         Int       @id @default(autoincrement())
-  code       String    @unique(map: "Coupon_code_key")
-  type       String
-  value      Int
-  isActive   Boolean   @default(true)
-  maxUsage   Int?
-  usedCount  Int       @default(0)
-  maxPerUser Int?
-  expiresAt  DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  payment    payment[]
+  id                        Int                        @id @default(autoincrement())
+  code                      String                     @unique(map: "Coupon_code_key")
+  type                      String
+  value                     Int
+  isActive                  Boolean                    @default(true)
+  maxUsage                  Int?
+  usedCount                 Int                        @default(0)
+  maxPerUser                Int?
+  expiresAt                 DateTime?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  payment                   payment[]
   personalCouponAssignments personalcouponassignment[]
 }
 
@@ -745,23 +781,26 @@ model testseriespackage {
 }
 
 model testseriestest {
-  id             Int                       @id @default(autoincrement())
-  packageId      Int
-  name           String
-  duration       Int                       @default(200)
-  totalQuestions Int                       @default(180)
-  isPublished    Boolean                   @default(false)
-  order          Int                       @default(0)
-  videoUrl       String?
-  syllabus       String?                   @db.LongText
-  notesUrl       String?
-  notesFileName  String?
-  createdAt      DateTime                  @default(now())
-  updatedAt      DateTime                  @updatedAt
-  package        testseriespackage         @relation(fields: [packageId], references: [id], onDelete: Cascade)
-  subjectConfigs testseriessubjectconfig[]
-  questions      testseriesquestion[]
-  results        testseriesresult[]
+  id               Int                       @id @default(autoincrement())
+  packageId        Int
+  name             String
+  duration         Int                       @default(200)
+  totalQuestions   Int                       @default(180)
+  isPublished      Boolean                   @default(false)
+  order            Int                       @default(0)
+  // Explanation video — shown after the student attempts the test
+  videoUrl         String?
+  // Study material video — available before the test
+  materialVideoUrl String?
+  syllabus         String?                   @db.LongText
+  notesUrl         String?
+  notesFileName    String?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  package          testseriespackage         @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  subjectConfigs   testseriessubjectconfig[]
+  questions        testseriesquestion[]
+  results          testseriesresult[]
 
   @@index([packageId])
   @@index([packageId, order]) // ORDER BY order ASC query

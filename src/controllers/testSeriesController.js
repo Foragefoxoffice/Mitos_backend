@@ -412,7 +412,7 @@ const getTestById = async (req, res) => {
 
 const createTest = async (req, res) => {
   const { packageId } = req.params;
-  const { name, duration, totalQuestions, subjectConfigs, videoUrl, syllabus } = req.body;
+  const { name, duration, totalQuestions, subjectConfigs, videoUrl, materialVideoUrl, syllabus } = req.body;
 
   if (!name) return res.status(400).json({ message: "Test name is required" });
   if (!subjectConfigs || !Array.isArray(subjectConfigs) || subjectConfigs.length === 0) {
@@ -436,6 +436,7 @@ const createTest = async (req, res) => {
         totalQuestions: totalQuestions || 180,
         order: nextOrder,
         videoUrl: videoUrl || null,
+        materialVideoUrl: materialVideoUrl || null,
         syllabus: syllabus || null,
         subjectConfigs: {
           create: subjectConfigs.map((sc) => ({
@@ -474,7 +475,7 @@ const reorderTests = async (req, res) => {
 
 const updateTest = async (req, res) => {
   const { id } = req.params;
-  const { name, duration, totalQuestions, isPublished, subjectConfigs, videoUrl, syllabus, order } = req.body;
+  const { name, duration, totalQuestions, isPublished, subjectConfigs, videoUrl, materialVideoUrl, syllabus, order } = req.body;
 
   try {
     // Update test and replace subject configs
@@ -486,7 +487,9 @@ const updateTest = async (req, res) => {
           duration,
           totalQuestions,
           isPublished,
-          videoUrl: videoUrl ?? undefined,
+          // undefined = leave as is; null / "" = clear (admin emptied the field)
+          videoUrl: videoUrl !== undefined ? (videoUrl || null) : undefined,
+          materialVideoUrl: materialVideoUrl !== undefined ? (materialVideoUrl || null) : undefined,
           syllabus: syllabus ?? undefined,
           ...(order !== undefined && { order: Number(order) }),
         },
