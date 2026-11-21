@@ -211,6 +211,9 @@ const refreshTokenHandler = async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
     if (!user) return res.status(403).json({ message: "Invalid token" });
+    if (user.status === "DELETED") {
+      return res.status(403).json({ message: "Account has been deleted" });
+    }
 
     // Single-device login: a mismatch means a newer login elsewhere
     // replaced this session (see authMiddleware.js's authenticateUser for

@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const prisma = require("../utils/prisma");
 // controllers/user.controller.js
 
@@ -290,6 +291,53 @@ const deleteUser = async (req, res) => {
   }
 };
 
+// Delete my own account (self-service — Apple Guideline 5.1.1(v)).
+// Anonymizes rather than hard-deletes, so payments/test results that
+// reference the user row stay intact. Rotating activeSessionId revokes
+// every token already issued (see authMiddleware's session check).
+const deleteMyAccount = async (req, res) => {
+  try {
+    const userId = parseInt(req.user.id);
+    if (isNaN(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { id: userId } });
+    if (!existing || existing.status === "DELETED") {
+      return res.status(404).json({ message: "Account not found" });
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          email: null,
+          phoneNumber: null,
+          password: null,
+          profile: null,
+          fcmToken: null,
+          whatsappOtp: null,
+          whatsappOtpExp: null,
+          emailOtp: null,
+          emailOtpExp: null,
+          name: "Deleted User",
+          status: "DELETED",
+          deletedAt: new Date(),
+          activeSessionId: crypto.randomUUID(),
+        },
+      }),
+      prisma.notification.deleteMany({ where: { userId } }),
+      prisma.userfavquestion.deleteMany({ where: { userId } }),
+      prisma.userfavtsquestion.deleteMany({ where: { userId } }),
+    ]);
+
+    res.json({ message: "Account deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting own account:", error);
+    res.status(500).json({ message: "Error deleting account", error: error.message });
+  }
+};
+
 // Get current authenticated user (requires middleware to set req.user.id)
 const getCurrentUser = async (req, res) => {
   try {
@@ -421,6 +469,7 @@ module.exports = {
   createUser,
   updateUser,
   deleteUser,
+  deleteMyAccount,
   getCurrentUser,
   upload,
   saveFcmToken,

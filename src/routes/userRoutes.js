@@ -5,6 +5,7 @@ const {
   createUser,
   updateUser,
   deleteUser,
+  deleteMyAccount,
   getCurrentUser,
   upload,
   saveFcmToken,
@@ -17,6 +18,9 @@ const router = express.Router();
 
 // ✅ User can access their own profile (Only requires authentication)
 router.get("/me", authenticateUser, getCurrentUser);
+// Must stay above the admin DELETE "/:id" — otherwise "/me" matches it as
+// id="me" and students get 403 "Admins only".
+router.delete("/me", authenticateUser, deleteMyAccount);
 
 // ✅ Users can update their own profile (Requires authentication and same user ID)
 router.put("/update-profile/:id", upload.single("profile"), updateUser);

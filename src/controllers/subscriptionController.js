@@ -773,7 +773,7 @@ exports.verifyGooglePurchase = async (req, res) => {
 ====================================================== */
 exports.verifyAppleSubscription = async (req, res) => {
   try {
-    const { receiptData, productId } = req.body;
+    const { receiptData, productId, transactionId } = req.body;
     const userId = parseInt(req.user?.id);
 
     if (!userId || isNaN(userId)) {
@@ -841,7 +841,7 @@ exports.verifyAppleSubscription = async (req, res) => {
       return res.status(400).json({ message: "Invalid receipt", status: appleData.status });
     }
 
-    const latest = pickReceiptEntry(appleData, productId);
+    const latest = pickReceiptEntry(appleData, productId, transactionId);
 
     if (!latest) {
       console.warn(`⚠️ [VERIFY_APPLE] No matching purchase found in receipt for productId: ${productId}`);
