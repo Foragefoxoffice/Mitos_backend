@@ -10,6 +10,8 @@ const {
   upload,
   saveFcmToken,
   updateUserSubscription,
+  listDeletedContacts,
+  unblockDeletedContact,
 } = require("../controllers/userController");
 
 const { authenticateUser, verifyAdmin, verifyUser } = require("../middlewares/authMiddleware");
@@ -26,6 +28,9 @@ router.delete("/me", authenticateUser, deleteMyAccount);
 router.put("/update-profile/:id", upload.single("profile"), updateUser);
 
 // 🔒 Admin Routes (Restricted to Admins only)
+// Deleted-account contact blocks — must stay above "/:id" routes.
+router.get("/deleted-contacts", verifyAdmin, listDeletedContacts);
+router.delete("/deleted-contacts/:id", verifyAdmin, unblockDeletedContact);
 router.get("/", verifyAdmin, getAllUsers);
 router.get("/:id", verifyAdmin, getUserById);
 router.post("/", verifyAdmin, createUser);

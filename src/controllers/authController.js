@@ -11,6 +11,18 @@ const welcomeEmail = require("../templates/welcomeEmail");
 const emailOtpTemplate = require("../templates/emailOtp");
 const sendWhatsappOTP = require("../utils/sendWhatsapp");
 const { notifyOtpLogin } = require("../services/loginNotification");
+const { isContactBlocked, DELETED_CONTACT_ERROR } = require("../utils/deletedContacts");
+
+// Deleted accounts' phone/email can't log in or register again (403).
+// Dummy reviewer accounts are checked before this is reached, so they're
+// never blocked. See src/utils/deletedContacts.js.
+const blockIfDeletedContact = async (res, contacts) => {
+  if (await isContactBlocked(prisma, contacts)) {
+    res.status(403).json(DELETED_CONTACT_ERROR);
+    return true;
+  }
+  return false;
+};
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -68,6 +80,8 @@ const register = async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
+    if (await blockIfDeletedContact(res, { email })) return;
+
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ message: "Email already registered" });
@@ -120,6 +134,8 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
+    if (await blockIfDeletedContact(res, { email })) return;
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
@@ -164,6 +180,8 @@ const googleAuth = async (req, res) => {
 
     const payload = ticket.getPayload();
     const { email, name, picture } = payload;
+
+    if (await blockIfDeletedContact(res, { email })) return;
 
     let user = await prisma.user.findUnique({ where: { email } });
 
@@ -257,6 +275,8 @@ const sendWhatsappOtp = async (req, res) => {
       });
     }
 
+    if (await blockIfDeletedContact(res, { phone: phoneNumber })) return;
+
     const otp = generateOtp();
     const expiry = new Date(Date.now() + 10 * 60 * 1000); // matches "Expires in 10 minutes" in the whatsapp_otp template
 
@@ -331,6 +351,8 @@ const verifyWhatsappOtp = async (req, res) => {
         testMode: true,
       });
     }
+
+    if (await blockIfDeletedContact(res, { phone: phoneNumber, email })) return;
 
     const user = await prisma.user.findUnique({ where: { phoneNumber } });
     if (!user) return res.status(400).json({ message: "User not found" });
@@ -425,6 +447,8 @@ const sendEmailOtp = async (req, res) => {
   if (!email) return res.status(400).json({ message: "Email is required" });
 
   try {
+    if (await blockIfDeletedContact(res, { email })) return;
+
     const otp = generateOtp();
     const expiry = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -474,6 +498,8 @@ const verifyEmailOtp = async (req, res) => {
     return res.status(400).json({ message: "Email & OTP required" });
 
   try {
+    if (await blockIfDeletedContact(res, { email, phone: phoneNumber })) return;
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(400).json({ message: "User not found" });
 

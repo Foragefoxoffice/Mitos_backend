@@ -6,6 +6,7 @@ const {
   normalizeCheckoutEmail,
 } = require("../utils/checkoutPhone");
 const { isValidPaymentSignature } = require("../utils/razorpaySignature");
+const { isContactBlocked, DELETED_CONTACT_ERROR } = require("../utils/deletedContacts");
 const {
   parseCartItems,
   evaluateCoupon,
@@ -109,6 +110,12 @@ exports.createOrder = async (req, res) => {
     if (!phone) throw new CheckoutError(400, "Enter a valid 10-digit WhatsApp number");
 
     const email = normalizeCheckoutEmail(account?.email) || normalizeCheckoutEmail(req.body.email);
+
+    // Never take payment for a deleted account's phone/email — fulfilment
+    // would create a new account the buyer then can't log in to.
+    if (await isContactBlocked(prisma, { phone, email })) {
+      throw new CheckoutError(403, DELETED_CONTACT_ERROR.message);
+    }
 
     const lines = await resolveCartLines(prisma, parsedItems);
 

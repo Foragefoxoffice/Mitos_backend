@@ -1023,3 +1023,15 @@ model checkoutorder {
   @@index([status])
   @@index([userId])
 }
+
+// Salted SHA-256 of a deleted account's phone/email (never the raw value) so
+// it can't be used to log in / register again. Admin can unblock (delete row).
+// See src/utils/deletedContacts.js.
+model deleted_contact {
+  id        Int      @id @default(autoincrement())
+  type      String   @db.VarChar(10)
+  hash      String   @unique @db.Char(64)
+  masked    String   @db.VarChar(100)
+  userId    Int?
+  deletedAt DateTime @default(now())
+}

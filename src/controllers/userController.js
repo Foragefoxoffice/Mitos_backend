@@ -6,6 +6,7 @@ const prisma = require("../utils/prisma");
 const multer = require("multer");
 const path = require("path");
 const { detectFcmPlatform } = require("../utils/notificationPlatform");
+const { recordDeletedContacts, isContactBlocked, DELETED_CONTACT_ERROR } = require("../utils/deletedContacts");
 
 /* ------------------------- className helpers ------------------------- */
 // Convert client -> Prisma enum
@@ -224,6 +225,11 @@ const updateUser = async (req, res) => {
       return res.status(400).json({ errors: errs });
     }
 
+    // A deleted account's phone can't be attached to another account.
+    if (data.phoneNumber && (await isContactBlocked(prisma, { phone: data.phoneNumber }))) {
+      return res.status(403).json(DELETED_CONTACT_ERROR);
+    }
+
     /* -------------------- Update User -------------------- */
     const user = await prisma.user.update({
       where,
@@ -307,8 +313,12 @@ const deleteMyAccount = async (req, res) => {
       return res.status(404).json({ message: "Account not found" });
     }
 
-    await prisma.$transaction([
-      prisma.user.update({
+    await prisma.$transaction(async (tx) => {
+      // Remember (hashed) phone/email BEFORE wiping them, so they can't be
+      // used to log in / register a fresh account again (deletedContacts.js).
+      await recordDeletedContacts(tx, existing);
+
+      await tx.user.update({
         where: { id: userId },
         data: {
           email: null,
@@ -325,11 +335,11 @@ const deleteMyAccount = async (req, res) => {
           deletedAt: new Date(),
           activeSessionId: crypto.randomUUID(),
         },
-      }),
-      prisma.notification.deleteMany({ where: { userId } }),
-      prisma.userfavquestion.deleteMany({ where: { userId } }),
-      prisma.userfavtsquestion.deleteMany({ where: { userId } }),
-    ]);
+      });
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.userfavquestion.deleteMany({ where: { userId } });
+      await tx.userfavtsquestion.deleteMany({ where: { userId } });
+    });
 
     res.json({ message: "Account deleted successfully" });
   } catch (error) {
@@ -463,7 +473,38 @@ const updateUserSubscription = async (req, res) => {
   }
 };
 
+// 🔒 Admin: list blocked contacts of deleted accounts (masked only).
+const listDeletedContacts = async (req, res) => {
+  try {
+    const rows = await prisma.deleted_contact.findMany({
+      orderBy: { deletedAt: "desc" },
+      take: 500,
+      select: { id: true, type: true, masked: true, userId: true, deletedAt: true },
+    });
+    res.json(rows);
+  } catch (error) {
+    console.error("Error listing deleted contacts:", error);
+    res.status(500).json({ message: "Failed to load deleted contacts" });
+  }
+};
+
+// 🔒 Admin: unblock — the phone/email can register a fresh account again.
+const unblockDeletedContact = async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+  try {
+    const { count } = await prisma.deleted_contact.deleteMany({ where: { id } });
+    if (!count) return res.status(404).json({ message: "Not found" });
+    res.json({ message: "Unblocked" });
+  } catch (error) {
+    console.error("Error unblocking deleted contact:", error);
+    res.status(500).json({ message: "Failed to unblock" });
+  }
+};
+
 module.exports = {
+  listDeletedContacts,
+  unblockDeletedContact,
   getAllUsers,
   getUserById,
   createUser,

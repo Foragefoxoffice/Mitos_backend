@@ -2,6 +2,19 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-11-27 — Block re-use of deleted accounts' phone/email
+
+Before: `DELETE /users/me` wiped email/phone, so the next OTP/Google login with the same contact auto-created a fresh account (+ fresh trial). Now blocked permanently, admin can unblock. Spec: `docs/superpowers/specs/2026-11-27-deleted-account-block-design.md`.
+
+- `prisma/schema.prisma` + new migration `20261127000000_add_deleted_contact` — table `deleted_contact` (type, salted SHA-256 `hash` UNIQUE, `masked`, userId, deletedAt). Raw phone/email never stored. **Not applied to the DB yet.**
+- `src/utils/deletedContacts.js` (+ `.test.js`, 13 tests) — normalise (phone → "91"+last 10 digits, email lower/trim), hash, mask, `isContactBlocked`, `recordDeletedContacts`, `DELETED_CONTACT_ERROR` (403 `{code:"ACCOUNT_DELETED", message}`). Optional env `CONTACT_HASH_SALT` (default `mitos-deleted-contact-v1`) — never change it after deploy or existing blocks stop matching.
+- `src/controllers/userController.js` — `deleteMyAccount` records contacts in the same (now interactive) transaction before wiping; `updateUser` rejects a blocked phone; new admin `listDeletedContacts` / `unblockDeletedContact`.
+- `src/routes/userRoutes.js` — `GET /users/deleted-contacts`, `DELETE /users/deleted-contacts/:id` (verifyAdmin), above `/:id`.
+- `src/controllers/authController.js` — 403 ACCOUNT_DELETED check in register, login, googleAuth, send/verify WhatsApp OTP, send/verify email OTP (after the dummy reviewer shortcut, so reviewer numbers are never blocked). Checked before any OTP is sent or user created.
+- `src/controllers/publicCheckoutController.js` — `createOrder` refuses a blocked phone/email (no payment taken).
+- Accounts deleted before this deploy can't be blocked (their contacts were already wiped).
+- **Deploy order:** `npx prisma migrate deploy` → `npx prisma generate` → `pm2 restart` backend (code references the new table) → admin → app build.
+
 ## 2026-11-24 (3)
 
 - `src/controllers/testSeriesController.js` — `getTestForPlay` (`GET /test-series/user/tests/:testId/play`) now also returns the test's `videoUrl` (admin's explanation/solution video). The app shows it as "Watch Solution Video" on the test series result screen. Additive field, safe for old app builds. Not deployed.
