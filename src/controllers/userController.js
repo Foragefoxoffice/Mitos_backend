@@ -313,12 +313,11 @@ const deleteMyAccount = async (req, res) => {
       return res.status(404).json({ message: "Account not found" });
     }
 
-    await prisma.$transaction(async (tx) => {
-      // Remember (hashed) phone/email BEFORE wiping them, so they can't be
-      // used to log in / register a fresh account again (deletedContacts.js).
-      await recordDeletedContacts(tx, existing);
-
-      await tx.user.update({
+    // Original array transaction, unchanged — the delete must never depend
+    // on the deleted_contact table (an interactive tx + blocking write here
+    // 500'd deletion on prod, 2026-11-27).
+    await prisma.$transaction([
+      prisma.user.update({
         where: { id: userId },
         data: {
           email: null,
@@ -335,11 +334,20 @@ const deleteMyAccount = async (req, res) => {
           deletedAt: new Date(),
           activeSessionId: crypto.randomUUID(),
         },
-      });
-      await tx.notification.deleteMany({ where: { userId } });
-      await tx.userfavquestion.deleteMany({ where: { userId } });
-      await tx.userfavtsquestion.deleteMany({ where: { userId } });
-    });
+      }),
+      prisma.notification.deleteMany({ where: { userId } }),
+      prisma.userfavquestion.deleteMany({ where: { userId } }),
+      prisma.userfavtsquestion.deleteMany({ where: { userId } }),
+    ]);
+
+    // AFTER the account is gone: remember the (hashed) phone/email so they
+    // can't be used to log in / register again (deletedContacts.js). Best
+    // effort — a failure here only means this contact isn't blocked.
+    try {
+      await recordDeletedContacts(prisma, existing);
+    } catch (blockErr) {
+      console.error(`[deletedContacts] failed to record contacts for deleted user ${userId}:`, blockErr.message);
+    }
 
     res.json({ message: "Account deleted successfully" });
   } catch (error) {
