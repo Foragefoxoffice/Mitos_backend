@@ -14,9 +14,11 @@ exports.createCoupon = async (req, res) => {
       maxUsage,
       maxPerUser,
       expiresAt,
+      scope,
     } = req.body;
 
     code = code.toUpperCase();
+    scope = scope === "TEST_SERIES" ? "TEST_SERIES" : "PREMIUM";
     value = Number(value);
     maxUsage = maxUsage ? Number(maxUsage) : null;
     maxPerUser = maxPerUser ? Number(maxPerUser) : null;
@@ -34,6 +36,7 @@ exports.createCoupon = async (req, res) => {
         maxUsage,
         maxPerUser,
         expiresAt,
+        scope,
         updatedAt: new Date(),
       },
     });
@@ -51,9 +54,12 @@ exports.createCoupon = async (req, res) => {
 exports.validateCoupon = async (req, res) => {
   try {
     const { code, plan, planPrice } = req.body;
+    // scope: "PREMIUM" (default — old app builds send nothing) or
+    // "TEST_SERIES" (test-series-only purchase screen; no plan involved).
+    const scope = req.body.scope === "TEST_SERIES" ? "TEST_SERIES" : "PREMIUM";
     const userId = req.user.id;
 
-    if (!code || !plan) {
+    if (!code || (scope === "PREMIUM" && !plan)) {
       return res.status(400).json({ message: "Missing coupon or plan" });
     }
 
@@ -78,6 +84,16 @@ exports.validateCoupon = async (req, res) => {
 
     if (!coupon || !coupon.isActive) {
       return res.status(400).json({ message: "Invalid coupon code" });
+    }
+
+    // Coupons are scoped: test-series coupons only on the test series
+    // checkout, normal coupons only on premium checkout.
+    if ((coupon.scope || "PREMIUM") !== scope) {
+      return res.status(400).json({
+        message: scope === "TEST_SERIES"
+          ? "This coupon is not valid for test series"
+          : "This coupon is only valid for test series",
+      });
     }
 
     // 3️⃣ Expiry check
@@ -155,6 +171,7 @@ exports.updateCoupon = async (req, res) => {
       maxPerUser,
       expiresAt,
       isActive,
+      scope,
     } = req.body;
 
     value = Number(value);
@@ -171,6 +188,7 @@ exports.updateCoupon = async (req, res) => {
         maxPerUser,
         expiresAt,
         isActive,
+        ...(scope ? { scope: scope === "TEST_SERIES" ? "TEST_SERIES" : "PREMIUM" } : {}),
         updatedAt: new Date(),
       },
     });

@@ -1070,6 +1070,8 @@ const getTestForPlay = async (req, res) => {
       totalQuestions: test.totalQuestions,
       subjectConfigs: test.subjectConfigs,
       package: test.package,
+      // Test-level solution/explanation video — app shows it on the result screen.
+      videoUrl: test.videoUrl || null,
       questions,
     });
   } catch (error) {

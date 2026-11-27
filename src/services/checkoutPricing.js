@@ -69,6 +69,11 @@ const evaluateCoupon = (coupon, { now = new Date(), usedByUser = 0 } = {}) => {
   if (!coupon || !coupon.isActive) {
     return { ok: false, message: "Invalid coupon code" };
   }
+  // Public checkout coupons apply to the plan line; test-series-only
+  // coupons are for the in-app test series checkout.
+  if (coupon.scope === "TEST_SERIES") {
+    return { ok: false, message: "Invalid coupon code" };
+  }
   if (coupon.expiresAt && coupon.expiresAt < now) {
     return { ok: false, message: "Coupon expired" };
   }

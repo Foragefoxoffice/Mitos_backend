@@ -44,6 +44,9 @@ router.get(
 // dictionary term list than to chat. Revisit if that product call changes.
 router.post("/translation/generate-batch", verifyAdmin, ctrl.runTranslationBatch);
 router.get("/translation/progress", verifyAdmin, ctrl.getTranslationProgress);
+router.post("/pipeline/start", verifyAdmin, ctrl.startNewQuestionsPipeline);
+router.post("/pipeline/stop", verifyAdmin, ctrl.stopNewQuestionsPipeline);
+router.get("/pipeline/status", verifyAdmin, ctrl.getNewQuestionsPipelineStatus);
 router.get("/translation/entries", verifyAdmin, ctrl.getTranslationEntries);
 router.get("/translation/languages", authenticateUser, ctrl.getTranslationLanguages);
 router.get("/translation/for-question/:questionId", authenticateUser, ctrl.getQuestionTranslation);

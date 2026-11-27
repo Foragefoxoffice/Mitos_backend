@@ -437,6 +437,8 @@ model coupon {
   usedCount                 Int                        @default(0)
   maxPerUser                Int?
   expiresAt                 DateTime?
+  /// "PREMIUM" (plan / combined checkout) or "TEST_SERIES" (test-series-only checkout)
+  scope                     String                     @default("PREMIUM") @db.VarChar(20)
   createdAt                 DateTime                   @default(now())
   updatedAt                 DateTime                   @updatedAt
   payment                   payment[]

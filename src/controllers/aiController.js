@@ -266,6 +266,37 @@ const getTranslationProgress = async (req, res) => {
   }
 };
 
+// One-click "process new questions" pipeline (admin) — ai-service's
+// jobs/newQuestionsPipeline.js chains keyword extraction -> keyword Hindi
+// translation -> question Hindi translation -> Hindi keyword linking.
+const startNewQuestionsPipeline = async (req, res) => {
+  try {
+    const { source, offpeakOnly } = req.body || {};
+    const response = await aiServiceClient.post("/internal/ai/pipeline/start", { source, offpeakOnly });
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const stopNewQuestionsPipeline = async (req, res) => {
+  try {
+    const response = await aiServiceClient.post("/internal/ai/pipeline/stop");
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
+const getNewQuestionsPipelineStatus = async (req, res) => {
+  try {
+    const response = await aiServiceClient.get("/internal/ai/pipeline/status");
+    res.json(response.data);
+  } catch (error) {
+    forwardError(res, error);
+  }
+};
+
 const getTranslationEntries = async (req, res) => {
   try {
     const response = await aiServiceClient.get("/internal/ai/translation/entries", { params: req.query });
@@ -534,6 +565,9 @@ module.exports = {
   stopTestSeriesDictionaryAutoRun,
   getTestSeriesTermsForQuestion,
   runTranslationBatch,
+  startNewQuestionsPipeline,
+  stopNewQuestionsPipeline,
+  getNewQuestionsPipelineStatus,
   getTranslationProgress,
   getTranslationEntries,
   getTranslationLanguages,

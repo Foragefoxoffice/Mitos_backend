@@ -113,4 +113,35 @@ const getChapterProgress = async (req, res) => {
   }
 };
 
-module.exports = { completePractice, getChapterProgress };
+// Per-subject "students who completed a topic in this chapter" counts, for the
+// chapter cards. Same slow-changing data, same short cache.
+const subjectCache = new Map(); // subjectId -> { at, counts }
+
+// GET /topic-progress/subject/:subjectId
+// -> { counts: { [chapterId]: distinct students with >=1 completed topic } }
+const getSubjectChapterCounts = async (req, res) => {
+  try {
+    const subjectId = Number(req.params.subjectId);
+    if (!Number.isInteger(subjectId) || subjectId <= 0) {
+      return res.status(400).json({ message: "Invalid subjectId" });
+    }
+    const hit = subjectCache.get(subjectId);
+    if (hit && Date.now() - hit.at < COUNT_TTL_MS) return res.json({ counts: hit.counts });
+
+    const rows = await prisma.$queryRaw`
+      SELECT t.chapterId AS chapterId, COUNT(DISTINCT u.userId) AS students
+      FROM usertopiccompletion u
+      JOIN topic t ON t.id = u.topicId
+      JOIN chapter c ON c.id = t.chapterId
+      WHERE c.subjectId = ${subjectId}
+      GROUP BY t.chapterId`;
+    const counts = Object.fromEntries(rows.map((r) => [Number(r.chapterId), Number(r.students)]));
+    subjectCache.set(subjectId, { at: Date.now(), counts });
+    res.json({ counts });
+  } catch (error) {
+    console.error("getSubjectChapterCounts error:", error);
+    res.status(500).json({ message: "Failed to load chapter counts" });
+  }
+};
+
+module.exports = { completePractice, getChapterProgress, getSubjectChapterCounts };

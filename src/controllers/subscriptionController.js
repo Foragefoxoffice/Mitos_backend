@@ -257,7 +257,8 @@ exports.createRazorpayOrder = async (req, res) => {
         where: { code: coupon.toUpperCase() },
       });
 
-      if (dbCoupon && dbCoupon.isActive) {
+      // Test-series-only coupons never apply to premium orders.
+      if (dbCoupon && dbCoupon.isActive && dbCoupon.scope !== "TEST_SERIES") {
         couponId = dbCoupon.id;
         discountAmount =
           dbCoupon.type === "percentage"
@@ -351,20 +352,24 @@ exports.createCombinedOrder = async (req, res) => {
       testSeriesTotal = testSeriesBreakdown.reduce((sum, p) => sum + p.price, 0);
     }
 
-    // ── Coupon applies to premium only ──
+    // ── Coupon applies to the overall order (premium + test series) ──
+    // (2026-11-24: was premium-only; app now previews the discount against
+    // the full subtotal, so the charged amount must match.)
+    const subtotal = premiumAmount + testSeriesTotal;
     let discountAmount = 0;
     let couponId = null;
     if (coupon) {
       const dbCoupon = await prisma.coupon.findUnique({ where: { code: coupon.toUpperCase() } });
-      if (dbCoupon?.isActive) {
+      if (dbCoupon?.isActive && dbCoupon.scope !== "TEST_SERIES") {
         couponId = dbCoupon.id;
         discountAmount = dbCoupon.type === "percentage"
-          ? Math.round((premiumAmount * dbCoupon.value) / 100)
+          ? Math.round((subtotal * dbCoupon.value) / 100)
           : dbCoupon.value;
+        if (discountAmount > subtotal) discountAmount = subtotal;
       }
     }
 
-    const totalAmount = (premiumAmount - discountAmount) + testSeriesTotal;
+    const totalAmount = subtotal - discountAmount;
     if (totalAmount <= 0) return res.status(400).json({ message: "Invalid amount" });
 
     const order = await razorpay.orders.create({

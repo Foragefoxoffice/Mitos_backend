@@ -10,10 +10,51 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// ─── Test-series coupon ───────────────────────────────────────────────────────
+// Only coupons with scope "TEST_SERIES" apply here (normal/premium coupons are
+// rejected). Throws { status, message } on an invalid coupon so the order is
+// never created with a discount the user wasn't shown.
+const resolveTSCoupon = async (code, userId, amount) => {
+  if (!code) return { couponId: null, discountAmount: 0 };
+  const coupon = await prisma.coupon.findUnique({ where: { code: String(code).toUpperCase() } });
+  const fail = (message) => { const e = new Error(message); e.status = 400; throw e; };
+  if (!coupon || !coupon.isActive) fail("Invalid coupon code");
+  if (coupon.scope !== "TEST_SERIES") fail("This coupon is not valid for test series");
+  if (coupon.expiresAt && coupon.expiresAt < new Date()) fail("Coupon expired");
+  if (coupon.maxUsage && coupon.usedCount >= coupon.maxUsage) fail("Coupon usage limit reached");
+  if (coupon.maxPerUser) {
+    const used = await prisma.payment.count({ where: { userId, couponId: coupon.id } });
+    if (used >= coupon.maxPerUser) fail("Coupon already used");
+  }
+  let discountAmount = coupon.type === "percentage"
+    ? Math.round((amount * coupon.value) / 100)
+    : coupon.value;
+  if (discountAmount > amount) discountAmount = amount;
+  if (discountAmount < 0) discountAmount = 0;
+  return { couponId: coupon.id, discountAmount };
+};
+
+// Coupon details stored on the Razorpay order's notes at create time.
+const couponFromOrderNotes = async (orderId) => {
+  try {
+    const order = await razorpay.orders.fetch(orderId);
+    const n = order?.notes || {};
+    return {
+      paidAmount: order?.amount != null ? order.amount / 100 : null,
+      couponId: n.couponId ? Number(n.couponId) : null,
+      discountAmount: n.discountAmount ? Number(n.discountAmount) : 0,
+      originalAmount: n.originalAmount ? Number(n.originalAmount) : null,
+    };
+  } catch (e) {
+    console.error("couponFromOrderNotes:", e.message);
+    return { paidAmount: null, couponId: null, discountAmount: 0, originalAmount: null };
+  }
+};
+
 // ─── Create Razorpay Order ────────────────────────────────────────────────────
 exports.createTSOrder = async (req, res) => {
   const userId = req.user.id;
-  const { packageId, purchaseType = "ETEST" } = req.body;
+  const { packageId, purchaseType = "ETEST", coupon } = req.body;
 
   if (!["ETEST", "PHYSICAL"].includes(purchaseType)) {
     return res.status(400).json({ message: "Invalid purchaseType" });
@@ -47,11 +88,20 @@ exports.createTSOrder = async (req, res) => {
       }
     }
 
+    const { couponId, discountAmount } = await resolveTSCoupon(coupon, userId, price);
+    const finalAmount = price - discountAmount;
+    if (finalAmount <= 0) return res.status(400).json({ message: "Invalid amount" });
+
     const order = await razorpay.orders.create({
-      amount: price * 100,
+      amount: finalAmount * 100,
       currency: "INR",
       receipt: `ts_pkg_${packageId}_${purchaseType}_${Date.now()}`,
-      notes: { packageId: String(packageId), userId: String(userId), purchaseType },
+      notes: {
+        packageId: String(packageId), userId: String(userId), purchaseType,
+        couponId: couponId ? String(couponId) : "",
+        discountAmount: String(discountAmount),
+        originalAmount: String(price),
+      },
     });
 
     await prisma.testseriesorder.create({
@@ -59,7 +109,7 @@ exports.createTSOrder = async (req, res) => {
         userId,
         packageId: Number(packageId),
         razorpayOrderId: order.id,
-        amount: price,
+        amount: finalAmount,
         status: "PENDING",
         purchaseType,
       },
@@ -73,8 +123,12 @@ exports.createTSOrder = async (req, res) => {
       key: process.env.RAZORPAY_KEY_ID,
       packageTitle: pkg.title,
       purchaseType,
+      originalAmount: price,
+      discountAmount,
+      finalAmount,
     });
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ message: err.message });
     console.error("TS create order error:", err);
     res.status(500).json({ message: "Failed to create order", error: err.message });
   }
@@ -107,6 +161,7 @@ exports.verifyTSPayment = async (req, res) => {
 
     const order = await prisma.testseriesorder.findFirst({ where: { razorpayOrderId: orderId } });
     const amount = order?.amount ?? 0;
+    const couponInfo = await couponFromOrderNotes(orderId);
 
     await grants.grantPackage(prisma, {
       userId,
@@ -130,6 +185,9 @@ exports.verifyTSPayment = async (req, res) => {
         transactionId: paymentId,
         subscriptionType: pkg?.title ?? `TEST_SERIES_${packageId}`,
         gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
+        couponId: couponInfo.couponId,
+        discountAmount: couponInfo.discountAmount,
+        originalAmount: couponInfo.originalAmount,
       });
     } catch (payErr) {
       if (payErr.code !== "P2002") console.error("TS payment record error:", payErr.message);
@@ -215,7 +273,7 @@ exports.upsertBundleConfig = async (req, res) => {
 // ─── Create Bundle Razorpay Order ─────────────────────────────────────────────
 exports.createBundleOrder = async (req, res) => {
   const userId = req.user.id;
-  const { purchaseType = "ETEST" } = req.body;
+  const { purchaseType = "ETEST", coupon } = req.body;
 
   if (!["ETEST", "PHYSICAL"].includes(purchaseType)) {
     return res.status(400).json({ message: "Invalid purchaseType" });
@@ -242,11 +300,20 @@ exports.createBundleOrder = async (req, res) => {
     const price = purchaseType === "PHYSICAL" ? bundle.physicalPrice : bundle.price;
     if (!price) return res.status(400).json({ message: "This bundle option is not available" });
 
+    const { couponId, discountAmount } = await resolveTSCoupon(coupon, userId, price);
+    const finalAmount = price - discountAmount;
+    if (finalAmount <= 0) return res.status(400).json({ message: "Invalid amount" });
+
     const order = await razorpay.orders.create({
-      amount: price * 100,
+      amount: finalAmount * 100,
       currency: "INR",
       receipt: `ts_bundle_${purchaseType}_${userId}_${Date.now()}`,
-      notes: { type: "bundle", userId: String(userId), purchaseType },
+      notes: {
+        type: "bundle", userId: String(userId), purchaseType,
+        couponId: couponId ? String(couponId) : "",
+        discountAmount: String(discountAmount),
+        originalAmount: String(price),
+      },
     });
 
     res.json({
@@ -257,8 +324,12 @@ exports.createBundleOrder = async (req, res) => {
       key: process.env.RAZORPAY_KEY_ID,
       packageTitle: bundle.label || "All Tests Bundle",
       purchaseType,
+      originalAmount: price,
+      discountAmount,
+      finalAmount,
     });
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ message: err.message });
     console.error("createBundleOrder error:", err);
     res.status(500).json({ message: "Failed to create bundle order", error: err.message });
   }
@@ -282,9 +353,11 @@ exports.verifyBundlePayment = async (req, res) => {
       where: { isActive: true },
       orderBy: { createdAt: "desc" },
     });
-    const amount = purchaseType === "PHYSICAL"
+    const couponInfo = await couponFromOrderNotes(orderId);
+    // Prefer what was actually charged (after any coupon) over list price.
+    const amount = couponInfo.paidAmount ?? (purchaseType === "PHYSICAL"
       ? (bundleOrder?.physicalPrice ?? 0)
-      : (bundleOrder?.price ?? 0);
+      : (bundleOrder?.price ?? 0));
 
     await grants.grantBundle(prisma, {
       userId,
@@ -303,6 +376,9 @@ exports.verifyBundlePayment = async (req, res) => {
         transactionId: paymentId,
         subscriptionType: "TEST_SERIES_BUNDLE",
         gatewayResponse: JSON.stringify({ orderId, paymentId, signature }),
+        couponId: couponInfo.couponId,
+        discountAmount: couponInfo.discountAmount,
+        originalAmount: couponInfo.originalAmount,
       });
     } catch (payErr) {
       if (payErr.code !== "P2002") console.error("Bundle payment record error:", payErr.message);

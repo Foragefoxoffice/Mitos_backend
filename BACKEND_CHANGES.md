@@ -2,6 +2,30 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-11-24 (3)
+
+- `src/controllers/testSeriesController.js` — `getTestForPlay` (`GET /test-series/user/tests/:testId/play`) now also returns the test's `videoUrl` (admin's explanation/solution video). The app shows it as "Watch Solution Video" on the test series result screen. Additive field, safe for old app builds. Not deployed.
+
+## 2026-11-24 (2) — Test-series-only coupons
+
+- `prisma/schema.prisma` + new migration `20261124000000_add_coupon_scope` — `coupon.scope` VARCHAR(20) NOT NULL DEFAULT 'PREMIUM' (`PREMIUM` | `TEST_SERIES`). Existing coupons become PREMIUM. **Not applied to the DB yet** — apply with `npx prisma migrate deploy` (never `migrate dev`), then `npx prisma generate`, BEFORE deploying the code below (Prisma would otherwise SELECT a missing column and break every coupon query).
+- `src/controllers/couponController.js` — create/update accept `scope`. `validateCoupon` accepts `scope` (default PREMIUM, so old app builds are unchanged); rejects a coupon whose scope doesn't match ("This coupon is not valid for test series" / "only valid for test series"). `plan` no longer required when scope is TEST_SERIES.
+- `src/controllers/testSeriesPaymentController.js` — `createTSOrder` / `createBundleOrder` accept optional `coupon`; only TEST_SERIES coupons accepted (full expiry/usage/per-user checks), discount applied to the Razorpay amount and stored in order notes (`couponId`, `discountAmount`, `originalAmount`). `verifyTSPayment` / `verifyBundlePayment` record couponId/discount/original on the payment row (which also increments `usedCount`); bundle verify now records the actually-paid amount instead of list price.
+- `src/controllers/subscriptionController.js` — `createRazorpayOrder` and `createCombinedOrder` ignore TEST_SERIES coupons (premium-only).
+- `src/services/checkoutPricing.js` — `evaluateCoupon` (public guest checkout) rejects TEST_SERIES coupons.
+
+## 2026-11-24
+
+- `src/controllers/subscriptionController.js` — `createCombinedOrder` (premium + test series Razorpay order): coupon discount now applies to the overall subtotal (premium + selected test series / bundle) instead of the premium price only; discount is capped at the subtotal. Pairs with the app's `TestSeriesUpsellScreen` now validating the coupon against the full total. iOS is unaffected (it never shows test series there, so it only ever creates a plan-only order). Not deployed.
+
+## 2026-11-23
+
+- **New: admin one-click "process new questions" pipeline (Hindi).** `src/controllers/aiController.js` + `src/routes/aiRoutes.js` — three admin-only (`verifyAdmin`) proxies to ai-service's new `/internal/ai/pipeline/*`: `POST /api/ai/pipeline/start` `{ source: "practice"|"test_series", offpeakOnly }`, `POST /api/ai/pipeline/stop`, `GET /api/ai/pipeline/status`. ai-service chains keyword extraction → keyword Hindi translation → question Hindi translation → Hindi keyword linking for that source. No DB change. Needs ai-service deployed with `src/jobs/newQuestionsPipeline.js` + `src/routes/pipelineRoutes.js`, or these routes return the ai-service 404.
+
+## 2026-11-21
+
+- **New: chapter-level "students completed" counts for Practice chapter cards.** `src/controllers/topicProgressController.js` new `getSubjectChapterCounts` → `GET /topic-progress/subject/:subjectId` returns `{ counts: { [chapterId]: distinct students with ≥1 completed topic in that chapter } }` (raw SQL over `usertopiccompletion`⋈`topic`⋈`chapter`, 10-min in-memory cache like the per-chapter counts). Route added in `src/routes/topicProgressRoutes.js`. No migration. App now shows this as a 👍 count on chapter cards and no longer shows per-topic counts / "Be the first to complete".
+
 ## 2026-11-20
 
 - **Fix: iOS monthly plan (Non-Renewing Subscription) repeat purchases could fail to extend premium.** `src/utils/appleReceipt.js` `pickReceiptEntry(appleData, productId, transactionId?)` — picks the exact transaction the app just paid for (searching both `latest_receipt_info` and `receipt.in_app`); without one, the newest by `purchase_date_ms` instead of the last array element (Apple doesn't guarantee order — picking month 1's already-used transaction for a month-2 purchase returned "Purchase already verified" without extending premium). `src/controllers/subscriptionController.js` `verifyAppleSubscription` reads optional `transactionId` from the body (as `clientTransactionId` — the function already declares `transactionId` further down; the first deploy of this crashed prod on boot with "Identifier already declared", fixed 2026-11-21) and passes it through. Backward compatible with app builds that don't send it. +3 tests (266/266 pass). App side sends `purchase.transactionId` (api.js + PaymentContext.jsx, both purchase and restore).
