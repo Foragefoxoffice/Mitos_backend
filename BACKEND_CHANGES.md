@@ -2,6 +2,12 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-11-27 (2) — PROD INCIDENT: OTP login 500s
+
+- Code from the entry below reached prod before `prisma migrate deploy` + `prisma generate`; `prisma.deleted_contact` was undefined so every `send-otp` returned 500 ("Cannot read properties of undefined (reading 'findFirst')").
+- Fix on server: `npx prisma migrate deploy && npx prisma generate && pm2 restart mitos-backend`.
+- `src/utils/deletedContacts.js` — `isContactBlocked` now fails OPEN (logs + returns false on any error), `recordDeletedContacts` skips (logs) when the model is missing, so login/deletion never depend on this table again. +1 test.
+
 ## 2026-11-27 — Block re-use of deleted accounts' phone/email
 
 Before: `DELETE /users/me` wiped email/phone, so the next OTP/Google login with the same contact auto-created a fresh account (+ fresh trial). Now blocked permanently, admin can unblock. Spec: `docs/superpowers/specs/2026-11-27-deleted-account-block-design.md`.

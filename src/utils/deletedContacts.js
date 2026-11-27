@@ -53,11 +53,20 @@ function maskContact(type, value) {
 async function isContactBlocked(db, { phone, email } = {}) {
   const hashes = [hashContact("PHONE", phone), hashContact("EMAIL", email)].filter(Boolean);
   if (hashes.length === 0) return false;
-  const row = await db.deleted_contact.findFirst({
-    where: { hash: { in: hashes } },
-    select: { id: true },
-  });
-  return !!row;
+  // Fail OPEN: this is an anti-abuse check, login must never depend on it.
+  // Real incident 2026-11-27: code reached prod before `prisma migrate
+  // deploy` + `generate`, `db.deleted_contact` was undefined, and every
+  // OTP request 500'd — nobody could log in.
+  try {
+    const row = await db.deleted_contact.findFirst({
+      where: { hash: { in: hashes } },
+      select: { id: true },
+    });
+    return !!row;
+  } catch (err) {
+    console.error("[deletedContacts] block check failed, allowing request:", err.message);
+    return false;
+  }
 }
 
 async function recordDeletedContacts(db, user) {
@@ -67,6 +76,12 @@ async function recordDeletedContacts(db, user) {
     if (hash) data.push({ type, hash, masked: maskContact(type, value), userId: user.id });
   }
   if (data.length === 0) return;
+  // Stale Prisma client (deploy before `prisma generate`) — don't break
+  // account deletion over it; the contact just won't be blocked.
+  if (!db.deleted_contact) {
+    console.error("[deletedContacts] prisma client has no deleted_contact model — run prisma generate; contact not recorded");
+    return;
+  }
   await db.deleted_contact.createMany({ data, skipDuplicates: true });
 }
 

@@ -79,6 +79,14 @@ describe('isContactBlocked', () => {
     await expect(isContactBlocked(db, { phone: '9876543210', email: 'a@b.com' })).resolves.toBe(false);
   });
 
+  it('fails open when the table/client is missing (never blocks login)', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(isContactBlocked({}, { phone: '9876543210' })).resolves.toBe(false);
+    const db = { deleted_contact: { findFirst: jest.fn().mockRejectedValue(new Error("Table doesn't exist")) } };
+    await expect(isContactBlocked(db, { email: 'a@b.com' })).resolves.toBe(false);
+    spy.mockRestore();
+  });
+
   it('skips the query when no contact is given', async () => {
     const db = { deleted_contact: { findFirst: jest.fn() } };
     await expect(isContactBlocked(db, {})).resolves.toBe(false);
