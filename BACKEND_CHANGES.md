@@ -8,6 +8,7 @@ Running notes of changes made to files in this `backend/` directory. Newest entr
 - Fix on server: `npx prisma migrate deploy && npx prisma generate && pm2 restart mitos-backend`.
 - `src/utils/deletedContacts.js` — `isContactBlocked` now fails OPEN (logs + returns false on any error), `recordDeletedContacts` skips (logs) when the model is missing, so login/deletion never depend on this table again. +1 test.
 - `src/controllers/userController.js` `deleteMyAccount` — account deletion returned 500 on prod. Restored the original array `$transaction` (no interactive tx / 5s timeout) and moved `recordDeletedContacts` AFTER it in its own try/catch: deletion always succeeds; a recording failure is only logged (contact not blocked).
+- New `scripts/blockContact.js` — manually block (or `--check`) a phone/email, for accounts deleted before the feature was live or before `prisma generate` ran on prod (their contact was never recorded). Refuses if an active account still uses the contact.
 
 ## 2026-11-27 — Block re-use of deleted accounts' phone/email
 
