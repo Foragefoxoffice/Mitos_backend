@@ -34,6 +34,8 @@ questions/
 
 # Database dumps
 *.sql
+# ...but Prisma migrations must reach the server so `prisma migrate deploy` works there
+!prisma/migrations/**/*.sql
 # Backups & Archives
 *.bak
 *.zip

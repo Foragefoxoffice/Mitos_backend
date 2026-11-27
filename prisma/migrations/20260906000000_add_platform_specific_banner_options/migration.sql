@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `bannerupload`
+  MODIFY `platform` ENUM('WEB_DESKTOP', 'WEB_MOBILE', 'MOBILE_APP', 'MOBILE_APP_ANDROID', 'MOBILE_APP_IOS') NULL;

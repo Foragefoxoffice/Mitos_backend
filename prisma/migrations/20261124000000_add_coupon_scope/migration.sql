@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `coupon` ADD COLUMN `scope` VARCHAR(20) NOT NULL DEFAULT 'PREMIUM';

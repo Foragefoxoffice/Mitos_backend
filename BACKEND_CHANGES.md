@@ -2,6 +2,12 @@
 
 Running notes of changes made to files in this `backend/` directory. Newest entries at the top.
 
+## 2026-11-27 (3) — Migrations applied to prod DB
+
+- Root cause of "OTP still sent to deleted accounts": `.gitignore` has `*.sql`, so migration files never reach GitHub/the server — server `migrate deploy` said "No migration found". The `deleted_contact` table didn't exist, so the (fail-open) check let everything through.
+- Applied from this machine (local `.env` points at prod `maindb`) with `npx prisma migrate deploy`: `20261118000000_add_user_topic_completion`, `20261124000000_add_coupon_scope`, `20261127000000_add_deleted_contact`. Verified: both tables + `coupon.scope` exist (existing coupon = PREMIUM).
+- `.gitignore` — added `!prisma/migrations/**/*.sql` after `*.sql`, so migration files now reach GitHub/the server and `npx prisma migrate deploy` works there. DB dumps (`*.sql` elsewhere) stay ignored.
+
 ## 2026-11-27 (2) — PROD INCIDENT: OTP login 500s
 
 - Code from the entry below reached prod before `prisma migrate deploy` + `prisma generate`; `prisma.deleted_contact` was undefined so every `send-otp` returned 500 ("Cannot read properties of undefined (reading 'findFirst')").
